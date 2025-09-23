@@ -44,9 +44,24 @@ func TestGetItemDetail(t *testing.T) {
 	}
 	log.Println(fmt.Sprintf("%s : %#v", itemDetail.ItemID, itemDetail))
 }
+func TesGetOrCreateUserIDExist(t *testing.T) {
+	userId := getOrCreateUserID("1")
+	if userId != -1 {
+		t.Errorf("Failed : UserId 1 doesn't exists in table Persion")
+	}
+}
 
-// func TestMakeOrder(){
-// }
+func TesGetOrCreateUserIDNotExist(t *testing.T) {
+	userId := getOrCreateUserID("-1")
+	if userId == -1 {
+		t.Errorf("Failed : UserId -1 exists in table Persion")
+	}
+}
+
+func TestMakeOrder(t *testing.T) {
+	orders := getNewOrders(23835)
+	t.Logf("orders after 23835 %#v\n", orders)
+}
 
 // func  test_order(){
 // }

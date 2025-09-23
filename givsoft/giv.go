@@ -79,9 +79,7 @@ func getOrCreateUserID(id string) int {
 		select MAX(PersonID)+1 from Person 
 		END
 	`, id).Scan(&personId)
-
 	return personId
-
 }
 
 func createOrderID() int {
@@ -89,7 +87,7 @@ func createOrderID() int {
 	sync_db.SQL_DB.QueryRow("select MAX(ID)+1 from OrderImported").Scan(&order_id)
 	return order_id
 }
-func Create_customer(person *givTypes.Person) int {
+func createCustomer(person *givTypes.Person) int {
 	sync_db.SQL_DB.MustExec(`
 		INSERT INTO Person(PersonTypeID,PersonCategoryCode,PersonFirstName,PersonLastName,
 		PersonID,PersonMobile,PersonIsActive)
@@ -115,7 +113,7 @@ func GIVOrderHeader(order_datail *Submit_Order_detail, wg *sync.WaitGroup) {
 		if len(parts) > 1 {
 			lastaname = parts[1]
 		}
-		Create_customer(&givTypes.Person{
+		createCustomer(&givTypes.Person{
 			PersonId:   personID,
 			FirstName:  firstname,
 			LastName:   lastaname,
@@ -335,7 +333,12 @@ func SyncPortalWithGivQOH(token string, wg *sync.WaitGroup) {
 
 func SyncPortalByGivOrders(token string, wg *sync.WaitGroup) {
 	defer wg.Done()
-	orders := getNewOrders()
+
+	lastGivOrderBuff, _ := sync_db.KV_DB.Read("LASTGIVODER")
+	var lastGivOrder uint32
+	binary.LittleEndian.PutUint32(lastGivOrderBuff, lastGivOrder)
+
+	orders := getNewOrders(lastGivOrder)
 	var lastToken uint32 = 0
 	for _, order := range orders {
 		if order.SentNo > lastToken {
@@ -350,10 +353,7 @@ func SyncPortalByGivOrders(token string, wg *sync.WaitGroup) {
 	sync_db.KV_DB.Write("LASTGIVODER", buff)
 }
 
-func getNewOrders() []NewGivOrder {
-	lastGivOrderBuff, _ := sync_db.KV_DB.Read("LASTGIVODER")
-	var lastGivOrder uint32
-	binary.LittleEndian.PutUint32(lastGivOrderBuff, lastGivOrder)
+func getNewOrders(lastGivOrder uint32) []NewGivOrder {
 	var orders []NewGivOrder
 	sync_db.SQL_DB.Select(&orders, `Select s.SentNo,qoh.ItemQuantityOnHand,r.ItemFee,v.ItemID,v.VariantID 
 		from ItemSent s join ItemSentRow r on s.ItemSentID = r.ItemSentID

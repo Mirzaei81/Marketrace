@@ -283,8 +283,14 @@ type csvPath struct {
 func Make_session() string {
 	url := base_url + "/site/api/v1/user/create-session"
 	method := "POST"
-	user := os.Getenv("PORTAL_USER")
-	password := os.Getenv("PORTAL_PASS")
+	user, exists := os.LookupEnv("PORTAL_USER")
+	if !exists {
+		log.Fatal("user not exits in .env")
+	}
+	password, exists := os.LookupEnv("PORTAL_PASS")
+	if !exists {
+		log.Fatal("pass not exits in .env")
+	}
 	payload_string := fmt.Sprintf(`{
 		"username": "%s",
 		"password": "%s"
@@ -300,7 +306,14 @@ func Make_session() string {
 
 	res, err := client.Do(req)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("error: %s payload: %s", err, payload_string)
+	}
+	if res.StatusCode != 200 {
+		body, _ := io.ReadAll(res.Body)
+		log.Fatalf("Too many request error staus is %d body : %s with payloadString %s",
+			res.StatusCode,
+			string(body),
+			payload_string)
 	}
 	defer res.Body.Close()
 	dec := json.NewDecoder(res.Body)
@@ -321,11 +334,13 @@ func Make_session() string {
 	}
 	return ""
 }
-func Get_orders(token string, wg *sync.WaitGroup) {
+func fetchOrders(token string, wg *sync.WaitGroup) (Orders, error) {
 	defer wg.Done()
 	todayJ := Jalaali.Now().AddDate(0, 0, 0).Format("yyy/MM/dd")
 	status := []string{"paid", "cash_on_delivery"}
+	var orders Orders
 	for _, s := range status {
+		wg.Add(1)
 		url := base_url + fmt.Sprintf("/site/api/v1/manage/store/orders?page=1&size=20&status=%s&payment=&start=%s&end=&label_id=&user_id=&shipping_id=&ip=&keywords=", s, todayJ)
 		method := "GET"
 		log.Print(url)
@@ -336,45 +351,63 @@ func Get_orders(token string, wg *sync.WaitGroup) {
 		req.Close = true
 		if err != nil {
 			log.Println(err)
-			return
+			return Orders{}, err
 		}
 		res, err := client.Do(req)
 		if err != nil {
 			log.Println(err)
-			return
+			return Orders{}, err
 		}
 		defer res.Body.Close()
 
 		if err != nil {
 			log.Printf("somthing is wrong with the Body %s\n", err)
-			return
+			return Orders{}, err
 		}
 
 		decoder := json.NewDecoder(res.Body)
-		var orders Orders
-		err = decoder.Decode(&orders)
+		var current_res Orders
+		err = decoder.Decode(&current_res)
+
+		orders.Orders = append(orders.Orders, current_res.Orders...)
+		orders.Count += current_res.Count
+
 		if err != nil {
 			log.Printf("There was an error while decoding orders %s\n", err)
-			return
+			return Orders{}, err
 		}
-		lastPortalPurchase, _ := DB.Read("LAST_PORTAL_PURCHASE")
-		lastPortalPurchaseValue := binary.LittleEndian.Uint32(lastPortalPurchase)
+		wg.Done()
+	}
+	return orders, nil
+}
+func SyncGivByPortalOrders(token string, wg *sync.WaitGroup) {
+	fetchWG := new(sync.WaitGroup)
+	fetchWG.Add(1)
+	lastPortalPurchase, _ := DB.Read("LAST_PORTAL_PURCHASE")
+	lastPortalPurchaseValue := binary.LittleEndian.Uint32(lastPortalPurchase)
+	orders, err := fetchOrders(token, fetchWG)
+	fetchWG.Wait()
 
-		if orders.Count > 0 {
-			for _, order := range orders.Orders {
-				if uint32(order.ID) == lastPortalPurchaseValue {
-					break
-				}
-				wg.Add(1)
-				go get_Order(token, order.ID, wg)
-			}
-			buf := make([]byte, 4) // adjust size according to your int type
-			binary.LittleEndian.PutUint32(buf, uint32(orders.Orders[0].ID))
-			DB.Write("LAST_PORTAL_PURCHASE", buf)
+	if err != nil {
+		return
+	}
+	procWG := new(sync.WaitGroup)
+
+	for _, order := range orders.Orders {
+		if uint32(order.ID) == lastPortalPurchaseValue {
+			break
 		}
+		procWG.Add(1)
+		go getOrderDetail(token, order.ID, procWG)
+	}
+	procWG.Wait()
+	if orders.Count > 0 {
+		buf := make([]byte, 4) // adjust size according to your int type
+		binary.LittleEndian.PutUint32(buf, uint32(orders.Orders[0].ID))
+		DB.Write("LAST_PORTAL_PURCHASE", buf)
 	}
 }
-func get_Order(token string, order_id int, wg *sync.WaitGroup) {
+func getOrderDetail(token string, order_id int, wg *sync.WaitGroup) {
 	defer wg.Done()
 	url := fmt.Sprintf("https://batkap.com/site/api/v1/manage/store/orders/%d", order_id)
 	log.Printf("Getting order Detail %d\n", order_id)
@@ -404,8 +437,8 @@ func get_Order(token string, order_id int, wg *sync.WaitGroup) {
 		return
 	}
 	if order_resault.Success {
-		var order_detail givsoft.Order_detail
-		var ItemDetail []givsoft.Itemdetail
+		var order_detail givsoft.Submit_Order_detail
+		var ItemDetail []givsoft.ItemDetail
 		var date_created_formated string
 		if order_resault.Order.Payments != nil {
 			date_created, _ := time.Parse("02/01/2006 15:04:05", order_resault.Order.Payments[0].Created.Universal)
@@ -418,50 +451,25 @@ func get_Order(token string, order_id int, wg *sync.WaitGroup) {
 		for _, item := range order_resault.Order.Items {
 			if item.Sku != nil {
 				total_price += item.Price
-				itemId, _ := strconv.ParseInt(*item.Sku, 10, 64)
-				ItemDetail = append(ItemDetail, givsoft.Itemdetail{
-					ItemDetailID: itemId,
-					OrderID:      order_id,
+				itemId, _ := strconv.ParseInt(*item.Sku, 10, 32)
+				ItemDetail = append(ItemDetail, givsoft.ItemDetail{
+					ItemDetailID: int(itemId),
 					ItemID:       itemId,
+					OrderID:      order_id,
 					ItemBarcode:  *item.Sku,
-					Quantity:     item.Quantity,
-					Fee:          item.Price,
-					DateCreated:  date_created_formated,
-					DateChanged:  date_created_formated,
+					Quantity:     float32(item.Quantity),
+					Fee:          float32(item.Price),
 				})
 			}
 		}
-		PersonId := new(string)
-		if order_resault.Order.User != nil {
-			*PersonId = strconv.FormatInt(int64(order_resault.Order.User.ID), 10) // portal User Id
-			if DB.Has(*PersonId) {
-				PersonIdb, err := DB.Read(*PersonId)
-				if err != nil {
-					log.Printf("Somthing Wen wrong oops %s\n", err)
-				}
-				*PersonId = strconv.FormatUint(uint64(binary.LittleEndian.Uint32(PersonIdb)), 10)
-				log.Println("we have PersonID" + *PersonId)
-			} else {
-				log.Println("we don't have PersonID ")
-				*PersonId = givsoft.Create_customer(strconv.FormatInt(int64(order_resault.Order.User.ID), 10), order_resault.Order.Contact.Name, order_resault.Order.Contact.City.Name, order_resault.Order.Contact.Address, order_resault.Order.Contact.Mobile, order_resault.Order.Contact.Zipcode)
-			}
-		} else {
-			*PersonId = "ناشناخته"
-		}
-		if PersonId == nil {
-			log.Println(PersonId)
-			return
-		}
-		order_detail = givsoft.Order_detail{
+		order_detail = givsoft.Submit_Order_detail{
 			OrderID:            -1,
 			SourceID:           order_resault.Order.ID,
 			Type:               "SALE",
 			No:                 order_resault.Order.ID,
 			Date:               date,
 			EffectiveDate:      date,
-			PersonID:           *PersonId,
 			CouponCode:         "",
-			Description:        "سفارش خرید از پرتال",
 			TotalQuantity:      order_resault.Order.Quantity,
 			TotalPrice:         total_price,
 			TotalDiscount:      0,
@@ -476,7 +484,6 @@ func get_Order(token string, order_id int, wg *sync.WaitGroup) {
 			PaymentType:        "",
 			PaymentStatus:      "",
 			DateCreated:        date_created_formated,
-			DateChanged:        date_created_formated,
 		}
 		if len(order_resault.Order.Payments) > 0 {
 			order_detail.PaymentBank = order_resault.Order.Payments[0].Gateway.Title
@@ -489,14 +496,23 @@ func get_Order(token string, order_id int, wg *sync.WaitGroup) {
 		}
 		order_detail.ItemDetail = ItemDetail
 		wg.Add(1)
-		go givsoft.Make_Order(order_detail, wg)
+		go givsoft.GIVOrderHeader(&order_detail, wg)
 	} else {
 		log.Println(order_resault.Success)
 	}
 }
 
 // Call For all variants
-func GetVariants(token string) {
+func SyncVariants(token string) {
+	ch := make(chan *csv.Reader)
+	go GetVariants(token, &ch)
+
+	reader := <-ch
+	close(ch)
+	syncGivByCsv(token, reader)
+}
+
+func GetVariants(token string, ch *chan *csv.Reader) {
 	url := "https://batkap.com/site/api/v1/manage/store/products/variants/export"
 	method := "GET"
 	req, err := http.NewRequest(method, url, nil)
@@ -516,10 +532,10 @@ func GetVariants(token string) {
 	decoder := json.NewDecoder(res.Body)
 	csvPath := new(csvPath)
 	decoder.Decode(csvPath)
-	readCsv(csvPath.Path, token)
-
+	log.Printf("DEBUG: downloading csv path from %s \n", csvPath.Path)
+	go GetAndParseCSV(csvPath.Path, token, ch)
 }
-func readCsv(uri string, token string) {
+func GetAndParseCSV(uri string, token string, ch *chan *csv.Reader) {
 	url := base_url + uri
 	method := "GET"
 	req, err := http.NewRequest(method, url, nil)
@@ -551,6 +567,12 @@ func readCsv(uri string, token string) {
 		fmt.Print(err)
 		os.Exit(-1)
 	}
+	reader.FieldsPerRecord = -1
+	*ch <- reader
+
+}
+func syncGivByCsv(token string, reader *csv.Reader) {
+	wg := new(sync.WaitGroup)
 	for {
 		line, err := reader.Read()
 		if err != nil {
@@ -562,7 +584,9 @@ func readCsv(uri string, token string) {
 		if line[8] != "" {
 			itemId, _ := strconv.ParseInt(line[0], 10, 64)
 			log.Printf("Updating variant : %s with Sku Of %s", line[2], line[8])
-			givsoft.QuantityOnhand_byitem(token, line[8], int(itemId),false)
+			// just insert into VariantsItem  and update  table accordingly
+			// csv is in form ID ProductID Title Price ComparePrice Type Status Stock Sku
+			givsoft.SyncPortalVariantWithGivQOH(token, line[8], int(itemId), wg)
 		}
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/natefinch/lumberjack"
 )
@@ -123,7 +124,7 @@ type kalaRequestResponse struct {
 
 const (
 	clientCode      = "TklnazVDOVUrNjdOdWR0QWFpaXcwQT09"
-	accessTokenPath = "access.txt"
+	accessTokenPath = "access.json"
 	TAG             = "digikala"
 )
 

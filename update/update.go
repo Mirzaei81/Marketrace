@@ -7,31 +7,30 @@ import (
 	"giv/types"
 	"log"
 	"net/http"
+	"sync"
 	"time"
-
-	"github.com/peterbourgon/diskv/v3"
 )
 
-var DB *diskv.Diskv
+var SetPrice bool
 
-func Update_Variants(token string, product_id int, stock *int, sku string, price float64, isTesting bool) {
-	url := fmt.Sprintf("https://batkap.com/site/api/v1/manage/store/products/variants/%d", product_id)
+func Update_Variants(token string, variant_id int, stock int, sku string, price float64, wg *sync.WaitGroup) {
+	defer wg.Done()
+	url := fmt.Sprintf("https://batkap.com/site/api/v1/manage/store/products/variants/%d", variant_id)
 	method := "PUT"
-	variant := getVariant(token, product_id)
-	if(variant==nil) {return}
-	time.Sleep(time.Microsecond * 300)
-
-	if stock != nil {
-		variant.Stock = *stock
+	variant := getVariant(token, variant_id)
+	if variant == nil {
+		return
 	}
-	if (price != 0 && variant.ComparePrice == 0 && variant.Price == 0) || isTesting {
-		variant.Price = int(price / 10)
+	time.Sleep(time.Microsecond * 300)
+	variant.Stock = stock
+	if (price != 0 && variant.ComparePrice == 0 && variant.Price == 0) || SetPrice {
+		variant.Price = int(price / 10) //TODO :  check
 		variant.ComparePrice = int(price / 10)
 	}
 	variant.Sku = sku
 	product_byte, err := json.Marshal(variant)
-	log.Printf("Updaing Variant %s\n", string(product_byte))
-	fmt.Printf("Updaing Variant %s\n", string(product_byte))
+	log.Printf("Updating Variant %s\n", string(product_byte))
+	fmt.Printf("Updating Variant %s\n", string(product_byte))
 	if err != nil {
 		log.Println(string(product_byte))
 	}

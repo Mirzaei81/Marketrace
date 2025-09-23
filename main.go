@@ -1,16 +1,17 @@
 package main
 
 import (
+	"flag"
 	"giv/givsoft"
 	"giv/portal"
-	SyncPortal "giv/update"
+	"giv/update"
 	"log"
-	"os"
 	"sync"
 	"time"
 
+	"giv/sync_db"
+
 	godotenv "github.com/joho/godotenv"
-	"github.com/peterbourgon/diskv/v3"
 	lumberjack "gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -24,19 +25,19 @@ var env_vars = [7]string{
 	"SUCCESS",
 }
 
-// func main() {
-// 	godotenv.Load()
-// 	itemPrice := givsoft.GetItemDetail(83550001019)
-// 	fmt.Println(int(*itemPrice))
-// }
-
 func main() {
 	err := godotenv.Load()
 	if err != nil {
-		log.Printf("Error while Loading .env file  %s \n", err)
-
-		os.Exit(1)
+		log.Fatalf("Error while Loading .env file  %s \n", err)
 	}
+	var windowsAuth = flag.Bool("auth", true, "should use windows authnication to connect to mssql")
+	var debug = flag.Bool("debug", true, "should debug")
+	var setPrice = flag.Bool("setPrice", false, "should update portal price while updating")
+	var mode = flag.String("mode", "order", "At which mode does program run on? (order|stock) ")
+	var csv_path = flag.String("csv", "./bk.csv", "Path for csv to bulk insert date in table VariantItems")
+	flag.Parse()
+
+	update.SetPrice = *setPrice
 	log.SetOutput(&lumberjack.Logger{
 		Filename:   "./main.log",
 		MaxSize:    10,
@@ -44,32 +45,36 @@ func main() {
 		MaxAge:     10,
 		Compress:   true,
 	})
-	flatTransform := func(s string) []string { return []string{} }
-	db := diskv.New(diskv.Options{
-		BasePath:     "portal_DB",
-		Transform:    flatTransform,
-		CacheSizeMax: 1024 * 1024,
-	})
-	portal.DB = db
-	givsoft.DB = db
-	SyncPortal.DB = db
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	if err != nil {
 		log.Printf("Error:error while  loading .env %s\n", err)
 	}
 
+	sync_db.Init_kv_db()
+	sync_db.InitSQL(*debug, *windowsAuth, *csv_path)
 	token := portal.Make_session()
 	wg := new(sync.WaitGroup)
-	portal.GetVariants(token)
-	for range time.Tick(time.Minute * 5) {
-		log.Printf("Syncing Begineing ...\n")
-		wg.Add(2)
-		go portal.Get_orders(token, wg)    //Syncing giv Items via portal orders
-		go givsoft.GetNewOrders(token, wg) //updating portal Product with  giv quantity on hand
-		wg.Wait()
+	if *mode == "order" {
+
+		for range time.Tick(time.Minute * 5) {
+			log.Printf("Syncing Begineing ...\n")
+			wg.Add(2)
+			//Syncing GIV Items via portal orders
+			go portal.SyncGivByPortalOrders(token, wg)
+			//updating portal Product with  giv quantity on hand
+			go givsoft.SyncPortalByGivOrders(token, wg)
+			wg.Wait()
+		}
+
+	} else if *mode == "stock" {
+		givsoft.SyncPortalWithGivQOH(token)
+		portal.SyncVariants(token)
+		for range time.Tick(time.Minute * 35) {
+			log.Println("Sync internal Database From new Portal Entries")
+			portal.SyncVariants(token)
+		}
+	} else {
+		log.Fatalf("Mode %s is not support please choose (order,stock)", mode)
 	}
-	for range time.Tick(time.Minute * 35) {
-		log.Println("Sync Interal Database From new Portal Enteries")
-		portal.GetVariants(token)
-	}
+
 }

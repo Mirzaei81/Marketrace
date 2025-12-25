@@ -1,7 +1,6 @@
 package givsoft
 
 import (
-	"fmt"
 	sync_db "giv/sync_db"
 	"log"
 	"math/rand"
@@ -42,7 +41,7 @@ func TestGetItemDetail(t *testing.T) {
 	if err != nil {
 		log.Fatalf("error Fetching item detail %s :  %s\n", itemId, err)
 	}
-	log.Println(fmt.Sprintf("%s : %#v", itemDetail.ItemID, itemDetail))
+	log.Printf("%s : %#v\n", itemDetail.ItemID, itemDetail)
 }
 func TesGetOrCreateUserIDExist(t *testing.T) {
 	userId := getOrCreateUserID("1")

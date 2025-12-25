@@ -1,11 +1,9 @@
 package givsoft
 
 import (
-	"encoding/binary"
 	e "giv/error"
 	sync_db "giv/sync_db"
 	givTypes "giv/types"
-	SyncPortal "giv/update"
 	"log"
 	"strings"
 	"sync"
@@ -219,11 +217,11 @@ func GIVOrderHeader(order_datail *Submit_Order_detail, wg *sync.WaitGroup) {
 			Fee:          item.Fee,
 		}
 		wg.Add(1)
-		go orderRow(ItemDetail, idx, wg)
+		go orderRow(ItemDetail, wg)
 	}
 }
 
-func orderRow(itemDetail ItemDetail, idx int, wg *sync.WaitGroup) {
+func orderRow(itemDetail ItemDetail, wg *sync.WaitGroup) {
 	defer wg.Done()
 	sync_db.SQL_DB.MustExec(`
 		INSERT INTO OrderItems (
@@ -306,52 +304,52 @@ func ListItems() []givTypes.GivItems {
 }
 func SyncPortalVariantWithGivQOH(token, sku string, variantID int, wg *sync.WaitGroup) {
 	defer wg.Done()
-	item, err := GetItemDetail(sku)
+	_, err := GetItemDetail(sku)
 	if err != nil {
 		log.Printf("Error Getting item detail for sku of csv %s", err)
 		return
 	}
 
 	wg.Add(1)
-	SyncPortal.Update_Variants(token,
-		item.VariantId, int(item.ItemQuantityOnHand), // db qoh is in form of float
-		item.ItemID, item.ItemPrice, wg)
+	// SyncPortal.Update_Variants(token,
+	// 	item.VariantId, int(item.ItemQuantityOnHand), // db qoh is in form of float
+	// 	item.ItemID, item.ItemPrice, wg)
 
 }
 func SyncPortalWithGivQOH(token string, wg *sync.WaitGroup) {
 	defer wg.Done()
-	givItems := ListItems()
+	// givItems := ListItems()
 
-	for _, item := range givItems {
-		wg.Add(1)
-		SyncPortal.Update_Variants(token,
-			item.VariantId, int(item.ItemQuantityOnHand), // db qoh is in form of float
-			item.ItemID, item.ItemPrice, wg)
+	// for _, _ := range givItems {
+	// 	wg.Add(1)
+	// 	// SyncPortal.Update_Variants(token,
+	// 	// 	item.VariantId, int(item.ItemQuantityOnHand), // db qoh is in form of float
+	// 	// 	item.ItemID, item.ItemPrice, wg)
 
-	}
+	// }
 }
 
-func SyncPortalByGivOrders(token string, wg *sync.WaitGroup) {
-	defer wg.Done()
+// func SyncPortalByGivOrders(token string, wg *sync.WaitGroup) {
+// 	defer wg.Done()
 
-	lastGivOrderBuff, _ := sync_db.KV_DB.Read("LASTGIVODER")
-	var lastGivOrder uint32
-	binary.LittleEndian.PutUint32(lastGivOrderBuff, lastGivOrder)
+// 	lastGivOrderBuff, _ := sync_db.KV_DB.Read("LASTGIVODER")
+// 	var lastGivOrder uint32
+// 	binary.LittleEndian.PutUint32(lastGivOrderBuff, lastGivOrder)
 
-	orders := getNewOrders(lastGivOrder)
-	var lastToken uint32 = 0
-	for _, order := range orders {
-		if order.SentNo > lastToken {
-			lastToken = order.SentNo
-		}
-		wg.Add(1)
-		SyncPortal.Update_Variants(token, order.VariantID, order.ItemQuantityOnHand,
-			order.ItemID, float64(order.ItemFee), wg)
-	}
-	buff := make([]byte, 4)
-	binary.LittleEndian.AppendUint32(buff, lastToken)
-	sync_db.KV_DB.Write("LASTGIVODER", buff)
-}
+// 	orders := getNewOrders(lastGivOrder)
+// 	var lastToken uint32 = 0
+// 	for _, order := range orders {
+// 		if order.SentNo > lastToken {
+// 			lastToken = order.SentNo
+// 		}
+// 		wg.Add(1)
+// 		SyncPortal.Update_Variants(token, order.VariantID, order.ItemQuantityOnHand,
+// 			order.ItemID, float64(order.ItemFee), wg)
+// 	}
+// 	buff := make([]byte, 4)
+// 	binary.LittleEndian.AppendUint32(buff, lastToken)
+// 	sync_db.KV_DB.Write("LASTGIVODER", buff)
+// }
 
 func getNewOrders(lastGivOrder uint32) []NewGivOrder {
 	var orders []NewGivOrder

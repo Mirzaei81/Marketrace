@@ -21,6 +21,13 @@ type Variant struct {
 	Status       []string `json:"status"`
 	Files        any      `json:"files"`
 }
+type PortalCSV struct {
+	VariantID    string
+	Name         string
+	Sku          string
+	Price        string
+	ComparePrice string
+}
 type VariantResult struct {
 	Success bool    `json:"success"`
 	Variant Variant `json:"variant"`
@@ -40,4 +47,17 @@ type GivItems struct {
 	ItemQuantityOnHand float64 `db:"ItemQuantityOnHand"`
 	ItemID             string  `db:"ItemID"`
 	VariantId          int     `db:"VariantID"`
+}
+
+type ItemDetail struct {
+	Quantity  []uint8
+	Title     string
+	Code      string
+	ItemID    int64
+	VariantID int64
+	Fee       []uint8
+}
+type DashtOrPortal struct {
+	Dasht  *ItemDetail
+	Portal *PortalCSV
 }

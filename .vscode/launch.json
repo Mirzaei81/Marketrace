@@ -12,10 +12,19 @@
             // "port": 2345,
             // "host": "127.0.0.1",
             "cwd": "${workspaceFolder}",
-            "args": ["-auth=false"],
+            "args": ["-auth=false","-csv=./prices.csv","-mode=sku"],
             "program": "${cwd}/main.go",
         },
-        
+        {
+            "name": "Launch Image",
+            "type": "debugpy",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "program": "${cwd}/AutoCrawler/main.py",
+            "env": {
+                "TOKEN": "884f13a6307c4f4fb7e15a24f1c2efcb"
+            }
+        },
         {
             "name": "Launch Test",
             "type": "go",
@@ -28,7 +37,7 @@
             "program": "${cwd}/main.go",
         },
         {
-                        "name": "Test Current File",
+            "name": "Test Current File",
             "type": "go",
             "request": "launch",
             "mode": "test",

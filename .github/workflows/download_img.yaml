@@ -1,0 +1,40 @@
+name: Python download image portal Name
+
+on: [push]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12","pypy3.10", "3.9", "3.10", "3.11",]
+
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: browser-actions/setup-chrome@v2
+      with:
+        chrome-version: 120
+        install-chromedriver: true
+      # You can test your matrix by printing the current Python version
+      - name: download deps 
+        run: pip install icrawler requests
+      - name: main runner
+        env: 
+          TOKEN: ${{secrets.token}}
+        run: python AutoCrawler/main.py
+
+      - uses: EndBug/add-and-commit@v9 
+        with:
+          add: '.'
+          author_name: Mirzaei81
+          author_email: mirzaei81@users.noreply.github.com
+          cwd: '.'
+          default_author: github_actor
+          message: 'Commit from GitHub Actions (Selenium-Action_Template)'
+          pathspec_error_handling: ignore
+

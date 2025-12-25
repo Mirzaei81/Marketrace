@@ -6,9 +6,13 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"giv/dasht"
 	givsoft "giv/givsoft"
+	sync_db "giv/sync_db"
+	"giv/types"
 	"io"
 	"log"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"strconv"
@@ -22,7 +26,7 @@ import (
 
 var DB *diskv.Diskv
 
-var base_url string = "https://batkap.com"
+var base_url string = "https://modernhyperindustry.com/"
 
 type Update_Resault struct {
 	Success  bool `json:"success"`
@@ -307,7 +311,7 @@ type csvPath struct {
 }
 
 func Make_session() string {
-	url := base_url + "/site/api/v1/user/create-session"
+	url := base_url + "site/api/v1/user/create-session"
 	method := "POST"
 	user, exists := os.LookupEnv("PORTAL_USER")
 	if !exists {
@@ -326,7 +330,7 @@ func Make_session() string {
 	req, err := http.NewRequest(method, url, payload)
 	req.Close = true
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Error while creating request for Make_session %s", err.Error())
 	}
 	req.Header.Add("Content-Type", "Application/json")
 
@@ -362,7 +366,7 @@ func Make_session() string {
 }
 func fetchOrders(token string, wg *sync.WaitGroup) (Orders, error) {
 	defer wg.Done()
-	todayJ := Jalaali.Now().AddDate(0, 0, 0).Format("yyy/MM/dd")
+	todayJ := Jalaali.Now().AddDate(0, 0, -10).Format("yyy/MM/dd")
 	status := []string{"paid", "cash_on_delivery"}
 	var orders Orders
 	for _, s := range status {
@@ -382,14 +386,10 @@ func fetchOrders(token string, wg *sync.WaitGroup) (Orders, error) {
 		res, err := client.Do(req)
 		if err != nil {
 			log.Println(err)
+			log.Printf("somthing is wrong with the Result %s\n", err)
 			return Orders{}, err
 		}
 		defer res.Body.Close()
-
-		if err != nil {
-			log.Printf("somthing is wrong with the Body %s\n", err)
-			return Orders{}, err
-		}
 
 		decoder := json.NewDecoder(res.Body)
 		var current_res Orders
@@ -435,7 +435,7 @@ func SyncGivByPortalOrders(token string, wg *sync.WaitGroup) {
 }
 func getOrderDetail(token string, order_id int, wg *sync.WaitGroup) {
 	defer wg.Done()
-	url := fmt.Sprintf("https://batkap.com/site/api/v1/manage/store/orders/%d", order_id)
+	url := fmt.Sprintf("%s/site/api/v1/manage/store/orders/%d", base_url, order_id)
 	log.Printf("Getting order Detail %d\n", order_id)
 	method := "GET"
 
@@ -455,7 +455,7 @@ func getOrderDetail(token string, order_id int, wg *sync.WaitGroup) {
 	defer res.Body.Close()
 	decder := json.NewDecoder(res.Body)
 	var order_resault Order_result
-	decder.Decode(&order_resault)
+	err = decder.Decode(&order_resault)
 	if err != nil {
 		body, _ := json.Marshal(order_resault)
 		log.Println(body)
@@ -535,10 +535,10 @@ func SyncVariants(token string) {
 
 	reader := <-ch
 	close(ch)
-	syncGivByCsv(token, reader)
+	syncDashtByCsv(token, reader)
 }
 
-func GetVariant(token string, variantID int) Variant {
+func GetVariant(token string, variantID int64) Variant {
 	vIdS := strconv.FormatInt(int64(variantID), 10)
 	url := base_url + "/site/api/v1/manage/store/products/variants/" + vIdS
 	method := "GET"
@@ -551,11 +551,11 @@ func GetVariant(token string, variantID int) Variant {
 	}
 	client := &http.Client{}
 	res, err := client.Do(req)
-	defer res.Body.Close()
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(-1)
 	}
+	defer res.Body.Close()
 	decoder := json.NewDecoder(res.Body)
 	variantDetail := new(VariantDetailResult)
 	decoder.Decode(variantDetail)
@@ -563,7 +563,7 @@ func GetVariant(token string, variantID int) Variant {
 
 }
 func GetVariants(token string, ch *chan *csv.Reader) {
-	url := "https://batkap.com/site/api/v1/manage/store/products/variants/export"
+	url := base_url + "site/api/v1/manage/store/products/variants/export"
 	method := "GET"
 	req, err := http.NewRequest(method, url, nil)
 	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", token))
@@ -574,11 +574,11 @@ func GetVariants(token string, ch *chan *csv.Reader) {
 	}
 	client := &http.Client{}
 	res, err := client.Do(req)
-	defer res.Body.Close()
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(-1)
 	}
+	defer res.Body.Close()
 	decoder := json.NewDecoder(res.Body)
 	csvPath := new(csvPath)
 	decoder.Decode(csvPath)
@@ -599,11 +599,11 @@ func GetAndParseCSV(uri string, token string, ch *chan *csv.Reader) {
 
 	client := &http.Client{}
 	res, err := client.Do(req)
-	defer res.Body.Close()
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(-1)
 	}
+	defer res.Body.Close()
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		fmt.Println(err)
@@ -619,9 +619,8 @@ func GetAndParseCSV(uri string, token string, ch *chan *csv.Reader) {
 	}
 	reader.FieldsPerRecord = -1
 	*ch <- reader
-
 }
-func syncGivByCsv(token string, reader *csv.Reader) {
+func syncDashtByCsv(token string, reader *csv.Reader) {
 	wg := new(sync.WaitGroup)
 	for {
 		line, err := reader.Read()
@@ -636,7 +635,138 @@ func syncGivByCsv(token string, reader *csv.Reader) {
 			log.Printf("Updating variant : %s with Sku Of %s", line[2], line[8])
 			// just insert into VariantsItem  and update  table accordingly
 			// csv is in form ID ProductID Title Price ComparePrice Type Status Stock Sku
-			givsoft.SyncPortalVariantWithGivQOH(token, line[8], int(itemId), wg)
+			dasht.SyncPortalVariantWithDashtCode(token, line[8], int(itemId), wg)
 		}
 	}
+}
+
+func dahstToStringList(item types.ItemDetail) []string {
+	var names []string
+	names = append(names, item.Title)
+	names = append(names, item.Code)
+	names = append(names, strconv.FormatInt(int64(intfrombytes(item.Quantity)), 10))
+	names = append(names, strconv.FormatInt(item.ItemID, 10))
+	names = append(names, strconv.FormatInt(item.VariantID, 10))
+	names = append(names, strconv.FormatInt(int64(intfrombytes(item.Fee)), 10))
+	return names
+}
+func poratlToString(item types.PortalCSV) []string {
+	var names []string
+	names = append(names, item.VariantID)
+	names = append(names, item.Name)
+	names = append(names, item.Sku)
+	names = append(names, item.Price)
+	names = append(names, item.ComparePrice)
+	return names
+
+}
+func GetItemFromCsv(token string, path string) {
+	f, err := os.Create("imcomplete.csv")
+	compF, err := os.Create("finalized.csv")
+	if err != nil {
+		log.Fatalf("Error while opening out.csv for writing %s", err.Error())
+	}
+	_, err = f.Write([]byte{0xEF, 0xBB, 0xBF})
+	if err != nil {
+		log.Fatalf("Error  writing bom %s", err.Error())
+	}
+	defer f.Close()
+	inCompleteWriter := csv.NewWriter(f)
+	completeWrite := csv.NewWriter(compF)
+	defer inCompleteWriter.Flush()
+	err = inCompleteWriter.Write([]string{"ایدی", "نام", "SKU", "قیمت", "قیمت خط خورده"})
+	if err != nil {
+		log.Fatalf("Error while writing headers %s", err.Error())
+	}
+	err = completeWrite.Write([]string{"نام", "کد", "موجودی", "ایدی دشت", "ایدی پرتال", "قیمت"})
+	if err != nil {
+		log.Fatalf("Error while writing headers %s", err.Error())
+	}
+	portalCH := make(chan *types.PortalCSV)
+	itemCH := make(chan *types.DashtOrPortal)
+	go sync_db.GetItemFromCsv(path, portalCH)
+
+	wg := new(sync.WaitGroup)
+	defer wg.Wait()
+
+	count := 0
+	total := 0
+	for portalItem := range portalCH {
+		total += 1
+		go dasht.GetItemDetailByPortalExactName(portalItem, itemCH)
+
+	}
+	for dashtItem := range itemCH {
+		if dashtItem.Dasht == nil {
+			count += 1
+			inCompleteWriter.Write(poratlToString(*dashtItem.Portal))
+
+		} else {
+			wg.Add(1)
+			time.Sleep(time.Millisecond * 300)
+			completeWrite.Write(poratlToString(*dashtItem.Portal))
+			// go updatePortalPoroductSKU(token, dashtItem.Dasht, wg)
+		}
+	}
+	wg.Wait()
+	log.Printf("finished setting sku for all the products missed count: %d", count)
+}
+func intfrombytes(b []uint8) int {
+	num, err := strconv.ParseFloat(string(b), 10)
+	if err != nil {
+		log.Fatalf("Error while parsing the stock/price %s", err.Error())
+	}
+	if num < 0. {
+		return 0
+	}
+	return int(num)
+}
+
+func updatePortalPoroductSKU(token string, detail *types.ItemDetail, wg *sync.WaitGroup) {
+	defer wg.Done()
+	url := fmt.Sprintf("%ssite/api/v1/manage/store/products/variants/%d", base_url, detail.VariantID)
+	variant := GetVariant(token, detail.VariantID)
+	method := "PUT"
+	tomanPrice := intfrombytes(detail.Fee) / 10
+	// Handling prices
+	variant.Price = tomanPrice
+	pseudoOff := rand.IntN(16) + 5 // random number [5,20]
+	variant.ComparePrice = tomanPrice * (pseudoOff/100 + 1)
+
+	//handle quantity and shippings
+	variant.Stock = intfrombytes(detail.Quantity)
+	variant.Minimum = 1
+	variant.Maximum = max(variant.Stock, variant.Stock-5)
+
+	payLoadB, err := json.Marshal(variant)
+	if err != nil {
+		log.Printf("Error while marshaling varaint for update %s", err.Error())
+		return
+	}
+	payload := bytes.NewReader(payLoadB)
+
+	client := &http.Client{}
+	req, err := http.NewRequest(method, url, payload)
+
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	req.Header.Add("Content-Type", "application/json")
+	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", token))
+
+	res, err := client.Do(req)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(string(body))
+
 }

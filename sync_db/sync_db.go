@@ -1,11 +1,16 @@
 package sync_db
 
 import (
+	"encoding/csv"
 	"fmt"
+	"giv/types"
+	"io"
 	"log"
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/microsoft/go-mssqldb"
@@ -55,12 +60,64 @@ func InitSQL(debug bool, windowsAuth bool, csvPath string) {
 	SQL_DB.Get(&dbName, "SELECT DB_NAME() AS [Current Database];")
 
 	if debug {
-		log.Print("Datbase DSN : ", host, "\t", db, "\t", port, "\t", username, "\t", password, "\t", windowsAuth,
+		fmt.Print("Datbase DSN : ", host, "\t", db, "\t", port, "\t", username, "\t", password, "\t", windowsAuth,
 			" current selected is ", dbName)
 	}
-	bootStrapTables(csvPath)
+	bootStrapTablesDasht(csvPath)
 }
-func bootStrapTables(csvPath string) {
+func bootStrapTablesDasht(csvPath string) {
+	createTablStmt := `IF OBJECT_ID('VariantsItems') IS NOT NULL
+	DROP TABLE IF EXISTS VariantsItems; 
+	CREATE TABLE VariantsItems(
+		VariantID BIGINT  primary key,
+		ItemID  nvarchar(250) null,
+		constraint fk_VariantItemID foreign KEY (ItemId) references  [Pos].[Item] (Code) -- TODO
+	);`
+	_, err := SQL_DB.Exec(createTablStmt)
+
+	if err != nil {
+		fmt.Printf("Error while create table %s", err)
+
+	}
+}
+func GetItemFromCsv(path string, ch chan *types.PortalCSV) {
+	f, err := os.Open(path)
+	if err != nil {
+		log.Fatalf("Failed to get csv file %s", err)
+	}
+
+	csv := csv.NewReader(f)
+	lineNumber := 0
+	for {
+		row, err := csv.Read()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			log.Fatalf("err while reading CSV file: %s", err)
+		}
+		if lineNumber == 0 {
+			lineNumber++
+			continue
+		}
+		// increment line count
+		lineNumber++
+		if len(row) != 5 {
+			log.Printf("Error whilte gettings the name for %s Error: %s", strings.Join(row, ","), err)
+			return
+		}
+		var item types.PortalCSV
+		item.VariantID = row[0]
+		item.Name = row[1]
+		item.Sku = row[2]
+		item.Price = row[3]
+		item.ComparePrice = row[4]
+		time.Sleep(time.Millisecond * 100)
+		ch <- &item
+	}
+	close(ch)
+}
+func bootStrapTablesGiv(csvPath string) {
 	dropProcStmt := `IF EXISTS (
 	SELECT type_desc, type
 	FROM sys.procedures WITH(NOLOCK)
@@ -79,22 +136,14 @@ func bootStrapTables(csvPath string) {
 	-- BootVarToItemTable
 	IF OBJECT_ID('VariantsItems') IS NOT NULL
 	DROP TABLE VariantsItems ; 
-	IF NOT EXISTS (
-	SELECT 1
-	FROM sys.key_constraints  where name = 'uq_ItemBarCode_Barcode'
-	)
-	BEGIN
-	ALTER TABLE ItemBarCode
-	ADD CONSTRAINT uq_ItemBarCode_Barcode UNIQUE (ItemBarCode);
-	END
-	
+
 	CREATE TABLE VariantsItems(
-	VariantID BIGINT  primary key,
-	Title varchar(255) null,
-	ItemID  varchar(50) null,
-	Price decimal null,
-	ComparePrice bigint null,
-	constraint fk_VariantItemID foreign KEY (ItemId) references ItemBarCode (ItemBarCode)
+		VariantID BIGINT  primary key,
+		Title varchar(255) null,
+		ItemID  nvarchar(250) null,
+		Price decimal null,
+		ComparePrice bigint null,
+		constraint fk_VariantItemID foreign KEY (ItemId) references  [Pos].[Item] (Code) -- TODO
 	)
 	EXEC('BULK INSERT dbo.VariantsItems
 	FROM ''' + 

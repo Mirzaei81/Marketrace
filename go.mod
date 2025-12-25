@@ -5,6 +5,7 @@ go 1.23.0
 require (
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/joho/godotenv v1.5.1
+	github.com/lithammer/fuzzysearch v1.1.8
 	github.com/microsoft/go-mssqldb v1.9.3
 	github.com/peterbourgon/diskv/v3 v3.0.1
 	github.com/yaa110/go-persian-calendar v1.2.1

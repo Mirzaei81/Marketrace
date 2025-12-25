@@ -2,5 +2,6 @@
     // // "go.gopath": "/home/mpc/go/bin",
     // "go.inferGopath": true,
     // // "go.inferGopath":false
-    "go.goroot":"/home/mpc/go/bin/go",
+    "go.goroot": "/home/mpc/go/bin/go",
+    "python-envs.pythonProjects": [],
 }

@@ -3,7 +3,6 @@ package portal
 import (
 	"encoding/csv"
 	givsoft "giv/givsoft"
-	"giv/sync_db"
 	"giv/update"
 	"io"
 	"log"
@@ -19,7 +18,6 @@ var token string
 
 func TestMain(m *testing.M) {
 	err := godotenv.Load("../.env")
-	sync_db.InitSQL(true, false, "")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -61,14 +59,14 @@ func TestVariantByPrice(t *testing.T) {
 	if line[8] == "" {
 		t.Errorf("Failure : Failed while parsing variantID from csv %s", err)
 	}
-	initialVaraint := GetVariant(token, int(variantId))
+	initialVaraint := GetVariant(token, variantId)
 	itemId, _ := strconv.ParseInt(line[0], 10, 64)
 	log.Printf("Updating variant : %s with Sku Of %s", line[2], line[8])
 	// just insert into VariantsItem  and update  table accordingly
 	// csv is in form ID ProductID Title Price ComparePrice Type Status Stock Sku
 	givsoft.SyncPortalVariantWithGivQOH(token, line[8], int(itemId), wg)
 	wg.Wait()
-	syncesVaraint := GetVariant(token, int(variantId))
+	syncesVaraint := GetVariant(token, variantId)
 	t.Logf("Initial %#v after update state is %#v", initialVaraint, syncesVaraint)
 
 }
@@ -83,6 +81,8 @@ func TestFetchVariant(t *testing.T) {
 		t.Errorf("Incomplete date  while fetching variant from portal using csv export  current count %d", count)
 	}
 	t.Logf("Portal csv export  variant  count %d", count)
+}
+func TextReadCustomer(t *testing.T) {
 
 }
 func readCsvbk(reader *csv.Reader, token string) int {

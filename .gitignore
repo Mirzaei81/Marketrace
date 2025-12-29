@@ -1,3 +1,9 @@
 .env
 portal_DB
-test\portal_DB
+test/portal_DB
+download/
+*.csv
+*.xlsx
+*log.gz
+*rar
+*.exe

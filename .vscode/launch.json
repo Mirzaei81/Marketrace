@@ -5,7 +5,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Launch Main",
+            "name": "Launch Main SKU",
             "type": "go",
             "request": "launch",
             "mode": "debug",
@@ -13,6 +13,26 @@
             // "host": "127.0.0.1",
             "cwd": "${workspaceFolder}",
             "args": ["-auth=false","-csv=./prices.csv","-mode=sku"],
+            "program": "${cwd}/main.go",
+        },
+        {
+            "name": "Launch Main boostrap",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            // "port": 2345,
+            // "host": "127.0.0.1",
+            "cwd": "${workspaceFolder}",
+            "args": ["-auth=false","-csv=./prices.csv","-mode=bootstrap"],
+            "program": "${cwd}/main.go",
+        },
+        {
+            "name": "Launch Main STOCK",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "cwd": "${workspaceFolder}",
+            "args": ["-auth=false","-csv=./prices.csv","-mode=stock","-debug=true"],
             "program": "${cwd}/main.go",
         },
         {

@@ -2,6 +2,7 @@ package sync_db
 
 import (
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"giv/types"
 	"io"
@@ -35,6 +36,8 @@ func InitSQL(debug bool, windowsAuth bool, csvPath string) {
 	if !exists {
 		host = "localhost"
 	}
+	instanceName, exists := os.LookupEnv("INSTANCE")
+
 	s_port, exists := os.LookupEnv("PORT")
 	var port int = 1433
 	if exists {
@@ -49,29 +52,32 @@ func InitSQL(debug bool, windowsAuth bool, csvPath string) {
 		db = "GivKohancharm04"
 	}
 
-	url := buildSQLServerURL(host, db, port, username, password, windowsAuth)
+	url := buildSQLServerURL(host, db, instanceName, port, username, password, windowsAuth)
 	var err error
 	SQL_DB, err = sqlx.Connect("mssql", url)
 	if err != nil {
 		log.Fatalf("Open connection failed %s", err)
 	}
-
+	SQL_DB.SetMaxOpenConns(120) // limit total connections
+	SQL_DB.SetMaxIdleConns(10)  // idle pool
+	SQL_DB.SetConnMaxLifetime(30 * time.Minute)
+	SQL_DB.SetConnMaxIdleTime(5 * time.Minute)
 	var dbName string
 	SQL_DB.Get(&dbName, "SELECT DB_NAME() AS [Current Database];")
 
 	if debug {
-		fmt.Print("Datbase DSN : ", host, "\t", db, "\t", port, "\t", username, "\t", password, "\t", windowsAuth,
-			" current selected is ", dbName)
+		fmt.Print("Database DSN : ", host, "\t", db, "\t", port, "\t", username, "\t", password, "\t", windowsAuth,
+			" current selected is ", dbName, "\n")
 	}
 	bootStrapTablesDasht(csvPath)
 }
 func bootStrapTablesDasht(csvPath string) {
 	createTablStmt := `IF OBJECT_ID('VariantsItems') IS NOT NULL
-	DROP TABLE IF EXISTS VariantsItems; 
+	DROP TABLE VariantsItems; 
 	CREATE TABLE VariantsItems(
-		VariantID BIGINT  primary key,
+		VariantID NVARCHAR(255) primary key,
 		ItemID  nvarchar(250) null,
-		constraint fk_VariantItemID foreign KEY (ItemId) references  [Pos].[Item] (Code) -- TODO
+		constraint fk_VariantItemID foreign KEY (ItemId) references  [Pos].[Item] (Code) 
 	);`
 	_, err := SQL_DB.Exec(createTablStmt)
 
@@ -80,42 +86,35 @@ func bootStrapTablesDasht(csvPath string) {
 
 	}
 }
-func GetItemFromCsv(path string, ch chan *types.PortalCSV) {
-	f, err := os.Open(path)
-	if err != nil {
-		log.Fatalf("Failed to get csv file %s", err)
-	}
-
-	csv := csv.NewReader(f)
-	lineNumber := 0
+func GetItemFromCsv(fileReader io.Reader, ch chan *types.PortalCSV) {
+	defer close(ch)
+	csvReader := csv.NewReader(fileReader)
+	csvReader.Read()
+	target := &csv.ParseError{}
 	for {
-		row, err := csv.Read()
+		row, err := csvReader.Read()
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
-			log.Fatalf("err while reading CSV file: %s", err)
-		}
-		if lineNumber == 0 {
-			lineNumber++
-			continue
+			if !errors.As(err, &target) {
+				log.Fatalf("ERR while reading CSV file: %s", err)
+			}
 		}
 		// increment line count
-		lineNumber++
-		if len(row) != 5 {
+		if len(row) != 15 {
 			log.Printf("Error whilte gettings the name for %s Error: %s", strings.Join(row, ","), err)
 			return
 		}
 		var item types.PortalCSV
 		item.VariantID = row[0]
-		item.Name = row[1]
-		item.Sku = row[2]
+		item.Name = row[2]
+		item.Sku = row[8]
 		item.Price = row[3]
 		item.ComparePrice = row[4]
-		time.Sleep(time.Millisecond * 100)
+		time.Sleep(time.Millisecond * 333)
 		ch <- &item
 	}
-	close(ch)
 }
 func bootStrapTablesGiv(csvPath string) {
 	dropProcStmt := `IF EXISTS (
@@ -158,13 +157,17 @@ func bootStrapTablesGiv(csvPath string) {
 	}
 }
 
-func buildSQLServerURL(host, database string, port int, user, password string, windowsAuth bool) string {
+func buildSQLServerURL(host, database, namedInstace string, port int, user, password string, windowsAuth bool) string {
 	query := url.Values{}
 	query.Add("database", database)
-
 	if windowsAuth {
 		// Windows Authentication (integrated security)
 		query.Add("trusted_connection", "yes")
+		query.Add("encrypt", "disable")
+		if len(namedInstace) > 0 {
+			query.Add("instance", namedInstace)
+			return fmt.Sprintf("sqlserver://%s:%d?%s", host, port, query.Encode())
+		}
 		return fmt.Sprintf("sqlserver://%s:%d?%s", host, port, query.Encode())
 	}
 

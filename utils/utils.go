@@ -1,8 +1,6 @@
 package utils
 
 import (
-	"bytes"
-	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"giv/types"
@@ -14,7 +12,7 @@ import (
 	Jalaali "github.com/yaa110/go-persian-calendar"
 )
 
-func GetVariants(token string, ch *chan *csv.Reader) {
+func GetVariants(token string, ch chan *os.File) {
 	url := types.PORTAL_BASE_URL + "site/api/v1/manage/store/products/variants/export"
 	method := "GET"
 	req, err := http.NewRequest(method, url, nil)
@@ -37,7 +35,7 @@ func GetVariants(token string, ch *chan *csv.Reader) {
 	log.Printf("DEBUG: downloading csv path from %s \n", csvPath.Path)
 	go getCSV(csvPath.Path, token, ch)
 }
-func getCSV(uri string, token string, ch *chan *csv.Reader) {
+func getCSV(uri string, token string, ch chan *os.File) {
 	url := types.PORTAL_BASE_URL + uri
 	method := "GET"
 	req, err := http.NewRequest(method, url, nil)
@@ -59,14 +57,14 @@ func getCSV(uri string, token string, ch *chan *csv.Reader) {
 		fmt.Println(err)
 		os.Exit(-1)
 	}
-	reader := csv.NewReader(bytes.NewBuffer(body))
 	todayJ := Jalaali.Now().AddDate(0, 0, 0).Format("yyy-MM-dd")
-	os.WriteFile(todayJ+".csv", body, 0777)
-	_, err = reader.Read()
+	err = os.WriteFile(todayJ+".csv", body, 0777)
 	if err != nil {
-		fmt.Print(err)
-		os.Exit(-1)
+		log.Fatal(err)
 	}
-	reader.FieldsPerRecord = -1
-	*ch <- reader
+	f, err := os.Open(todayJ + ".csv")
+	if err != nil {
+		log.Fatal(err)
+	}
+	ch <- f
 }

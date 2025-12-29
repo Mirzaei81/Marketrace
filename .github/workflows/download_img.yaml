@@ -6,22 +6,19 @@ jobs:
   build:
 
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12","pypy3.10", "3.9", "3.10", "3.11",]
     steps:
       - uses: actions/checkout@v5
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: 3.12
       - uses: browser-actions/setup-chrome@v2
         with:
           chrome-version: 120
           install-chromedriver: true
       # You can test your matrix by printing the current Python version
       - name: download deps 
-        run: pip install icrawler requests
+        run: pip install -r  AutoCrawler/requirements.txt
       - name: main runner
         env: 
           TOKEN: ${{secrets.token}}

@@ -54,11 +54,12 @@ func main() {
 	var windowsAuth = flag.Bool("auth", true, "should use windows authnication to connect to mssql")
 	var shouldDebug = flag.Bool("debug", true, "should debug")
 	var setPrice = flag.Bool("setPrice", false, "should update portal price while updating")
-	var mode = flag.String("mode", "order", "At which mode does program run on? (order|stock|sku|bootstrap) ")
+	var mode = flag.String("mode", "order", "At which mode does program run on? (order|stock|local|bootstrap|stats) ")
 	var csv_path = flag.String("csv", "./bk.csv", "Path for csv to bulk insert date in table VariantItems")
 	var memLimit = flag.String("mem", "5G", "Memory in Format of %d[G|M]")
 	var shutdownHour = flag.Int("hour", 7, "Set time when app get's shut down:[0-24) -1 for always on")
 	var logFile = flag.String("logName", "main.log", "name of ther output logfile")
+	var fieldName = flag.String("fieldname", "cash_on_delivery", "field name to remove(cash_on_delivery)")
 	if *shutdownHour != -1 {
 		go func() {
 			for range time.Tick(time.Hour*1 + 1*time.Minute) {
@@ -139,16 +140,12 @@ func main() {
 				portal.SyncVariants(token)
 			}
 		}
-	case "sku":
+	case "local":
 		f, err := os.Open(*csv_path)
 		if err != nil {
 			log.Fatalf("error While Opening the file %s\n", err.Error())
 		}
-		go portal.GetAndUpdateItemFromCsv(token, f)
-		for range time.Tick(time.Minute * 120) {
-			log.Print("[INFO]: Geting And Updateing from csv")
-			go portal.GetAndUpdateItemFromCsv(token, f)
-		}
+		portal.GetAndUpdateItemFromCsv(token, f)
 	case "bootstrap":
 		{
 
@@ -168,7 +165,7 @@ func main() {
 						}
 						go portal.CreateProduct(item, token)
 					} else {
-						go update.Update_Variants(token, strconv.FormatInt(int64(prod.ID), 10), types.ToInt(item.Quantity), strconv.FormatInt(item.ItemID, 10), types.ToInt(item.Fee), nil)
+						go update.Update_Variants(token, strconv.FormatInt(int64(prod.ID), 10), types.ToInt(item.Quantity), strconv.FormatInt(item.ItemID, 10), types.ToInt(item.Fee),"", nil)
 						if *shouldDebug {
 							log.Printf("[INFO]: Updating  Variant %s", item.ToString())
 						}
@@ -178,6 +175,11 @@ func main() {
 				}
 			}
 		}
+	case "stats":{
+		f,_ :=  os.Open(*csv_path)
+		portal.UpdateVariantsField(token,f,*fieldName)
+	
+	}
 	default:
 		log.Fatalf("Mode %s is not support please choose (order,stock)", *mode)
 	}

@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -52,6 +51,7 @@ func InitSQL(debug bool, windowsAuth bool, csvPath string) {
 		db = "GivKohancharm04"
 	}
 
+
 	url := buildSQLServerURL(host, db, instanceName, port, username, password, windowsAuth)
 	var err error
 	SQL_DB, err = sqlx.Connect("mssql", url)
@@ -79,6 +79,7 @@ func bootStrapTablesDasht(csvPath string) {
 		ItemID  nvarchar(250) null,
 		constraint fk_VariantItemID foreign KEY (ItemId) references  [Pos].[Item] (Code) 
 	);`
+	
 	_, err := SQL_DB.Exec(createTablStmt)
 
 	if err != nil {
@@ -86,7 +87,7 @@ func bootStrapTablesDasht(csvPath string) {
 
 	}
 }
-func GetItemFromCsv(fileReader io.Reader, ch chan *types.PortalCSV) {
+func GetItemFromCsv(fileReader io.Reader, ch chan *types.PortalCSV,sleep bool) {
 	defer close(ch)
 	csvReader := csv.NewReader(fileReader)
 	csvReader.Read()
@@ -101,18 +102,16 @@ func GetItemFromCsv(fileReader io.Reader, ch chan *types.PortalCSV) {
 				log.Fatalf("ERR while reading CSV file: %s", err)
 			}
 		}
-		// increment line count
-		if len(row) != 15 {
-			log.Printf("Error whilte gettings the name for %s Error: %s", strings.Join(row, ","), err)
-			return
-		}
+
 		var item types.PortalCSV
 		item.VariantID = row[0]
 		item.Name = row[2]
 		item.Sku = row[8]
 		item.Price = row[3]
 		item.ComparePrice = row[4]
-		time.Sleep(time.Millisecond * 333)
+		if sleep{
+			time.Sleep(time.Millisecond * 333)
+		}
 		ch <- &item
 	}
 }
@@ -183,4 +182,26 @@ func Init_kv_db() {
 		Transform:    flatTransform,
 		CacheSizeMax: 1024 * 1024,
 	})
+}
+
+func CreateTempTable(){
+	SQL_DB.MustExec(`
+	CREATE TABLE #ItemTemp
+(
+    VariantID              INT        NULL,
+    Quantity               DECIMAL(18,4) NULL,
+    Title                  NVARCHAR(255),
+    Code                   NVARCHAR(50),
+    ItemID                 INT,
+    Fee                    DECIMAL(18,4),
+    SaleInvoiceItemID      INT         NULL,
+    SaleInvoiceNumber      NVARCHAR(50) NULL
+);
+GO
+CREATE NONCLUSTERED INDEX IX_ItemTemp_ItemID
+ON #ItemTemp (ItemID)
+INCLUDE (VariantID, Quantity, Fee);
+GO;
+
+	`)
 }

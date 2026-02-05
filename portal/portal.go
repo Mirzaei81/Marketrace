@@ -72,6 +72,13 @@ type VariantDetailResult struct {
 	Success bool    `json:"success"`
 	Variant Variant `json:"variant"`
 }
+
+type VariantListResult struct {
+	Success  bool `json:"success"`
+	Total    int  `json:"total"`
+	Count    int  `json:"count"`
+	Variants []Variant`json:"variants"`
+}
 type Variant struct {
 	ID           int      `json:"id"`
 	ProductID    int      `json:"product_id"`
@@ -586,6 +593,15 @@ func SyncVariants(token string) {
 	go GetAndUpdateItemFromCsv(token, reader)
 }
 
+func UpdateVariantsField(token string,csvFile *os.File,fieldName string)  {
+	lines,_ :=lineCounter(csvFile)
+	csvFile.Seek(0, io.SeekStart)
+	portalCH := make(chan *types.PortalCSV, lines)
+	go sync_db.GetItemFromCsv(csvFile, portalCH,true)
+	for portalItem := range portalCH {
+		go update.Update_Variants(token,portalItem.VariantID,-1,"",0,fieldName,nil)
+	}
+}
 func GetVariant(token string, variantID int64) Variant {
 	vIdS := strconv.FormatInt(int64(variantID), 10)
 	url := base_url + "/site/api/v1/manage/store/products/variants/" + vIdS
@@ -644,8 +660,9 @@ func GetAndUpdateItemFromCsv(token string, csvFile *os.File) {
 	}
 	_, err = compF.Write([]byte{0xEF, 0xBB, 0xBF})
 	if err != nil {
-		log.Fatalf("Error  writing bom %s", err.Error())
+		log.Fatalf("Error writing bom %s", err.Error())
 	}
+
 
 	defer f.Close()
 	inCompleteWriter := csv.NewWriter(f)
@@ -663,17 +680,22 @@ func GetAndUpdateItemFromCsv(token string, csvFile *os.File) {
 	portalCH := make(chan *types.PortalCSV, lines)
 	itemCH := make(chan *types.DashtOrPortal, lines)
 
-	go sync_db.GetItemFromCsv(csvFile, portalCH)
+	go sync_db.GetItemFromCsv(csvFile, portalCH,true)
+
 
 	wg := new(sync.WaitGroup)
 	dashConsumer := new(sync.WaitGroup)
 	dashConsumer.Add(1)
+	var zeros []*types.ItemDetail
 	go func() {
 		defer dashConsumer.Done()
 		for dashtItem := range itemCH {
 			log.Print(dashtItem.ToString())
 			if dashtItem.Dasht != nil {
 				time.Sleep(time.Millisecond * 333)
+				if types.ToInt(dashtItem.Dasht.Quantity)==0{
+					zeros =  append(zeros,dashtItem.Dasht)
+				}
 				completeWrite.Write(dashtItem.Dasht.ToStringList())
 				completeWrite.Flush()
 				dashConsumer.Add(1)
@@ -682,18 +704,20 @@ func GetAndUpdateItemFromCsv(token string, csvFile *os.File) {
 		}
 	}()
 	count := 0
-	total := 0
+	
+	lastFiscal,err := dasht.GetLatestFiascal()
+	if err!=nil{
+		log.Fatal(err)
+	}
 	for portalItem := range portalCH {
-		total++
-		capturedTotal := total
 		wg.Add(1)
-		go func(item *types.PortalCSV, capturedTotal int) {
+		go func(item *types.PortalCSV) {
 			defer wg.Done()
 			var result *types.DashtOrPortal
 			if len(item.Sku) == 0 {
-				result, err = dasht.GetItemDetailByPortalExactName(item, capturedTotal)
+				result, err = dasht.GetItemDetailByPortalExactName(item, lastFiscal)
 			} else {
-				result, err = dasht.GetItemDetailByCode(item, capturedTotal)
+				result, err = dasht.GetItemDetailByCode(item,lastFiscal)
 			}
 			if err != nil {
 				count++
@@ -703,14 +727,19 @@ func GetAndUpdateItemFromCsv(token string, csvFile *os.File) {
 				return
 			}
 			itemCH <- result
-		}(portalItem, capturedTotal)
+		}(portalItem)
 	}
 	wg.Wait()
 	close(itemCH)
-	dashConsumer.Wait()
 	log.Printf("finished setting sku for all the products missed count: %d", count)
 	caption := fmt.Sprintf("گزارش تاریخ %s", Jalaali.Now().Format("yyy/MM/dd,HH:mm:ss"))
 	report.ReportFile(caption, f.Name())
+
+	for _,z:=range zeros{
+		dashConsumer.Add(1)
+		go update.UpdatePortalVariantSKU(token, z, dashConsumer)
+	}
+	dashConsumer.Wait()
 }
 func CreateProduct(item types.ItemDetail, token string) {
 	if len(item.Code) == 0 {

@@ -17,7 +17,7 @@ import (
 
 var SetPrice bool
 
-func Update_Variants(token string, variant_id string, stock int, sku string, price int, wg *sync.WaitGroup) {
+func Update_Variants(token string, variant_id string, stock int, sku string, price int,fieldName string , wg *sync.WaitGroup) {
 	if wg != nil {
 		defer wg.Done()
 	}
@@ -27,16 +27,25 @@ func Update_Variants(token string, variant_id string, stock int, sku string, pri
 	if variant == nil {
 		return
 	}
-	variant.Stock = stock
+	if stock!=-1{
+		variant.Stock = stock
+	} 
 	if (price != 0 && variant.ComparePrice == 0 && variant.Price == 0) || SetPrice {
 		variant.Price = int(price / 10) //TODO :  check
 		variant.ComparePrice = int(price / 10)
 	}
-
-	variant.Sku = sku
+	status := variant.Status
+	for i,val:= range status {
+		if val == fieldName {
+			variant.Status = append(status[:i], status[i+1:]...)
+			break
+		}
+	}
+	if len(sku)!=0{
+		variant.Sku = sku
+	}
 	product_byte, err := json.Marshal(variant)
 	log.Printf("Updating Variant %s\n", string(product_byte))
-	fmt.Printf("Updating Variant %s\n", string(product_byte))
 	if err != nil {
 		log.Println(string(product_byte))
 	}
@@ -108,8 +117,12 @@ func UpdatePortalVariantSKU(token string, detail *types.ItemDetail, wg *sync.Wai
 		variant.ComparePrice = int(math.Round(float64(tomanPrice)*(pseudoOff/100+1)/1000) * 1000)
 	}
 
+
 	//handle quantity and shippings
 	variant.Stock = types.ToInt(detail.Quantity)
+	if(variant.Stock<0){
+		variant.Stock = 0
+	}
 	if variant.Stock == 0 {
 		variant.Minimum = 0
 	} else {
@@ -118,7 +131,7 @@ func UpdatePortalVariantSKU(token string, detail *types.ItemDetail, wg *sync.Wai
 	if variant.Stock <= 5 {
 		variant.Maximum = variant.Stock
 	} else {
-		variant.Maximum = max(5, variant.Stock-5)
+		variant.Maximum = min(9999,max(5, variant.Stock-5))
 	}
 
 	payLoadB, err := json.Marshal(variant)
@@ -150,7 +163,7 @@ func UpdatePortalVariantSKU(token string, detail *types.ItemDetail, wg *sync.Wai
 		fmt.Println(err)
 		return
 	}
-	log.Printf("%s \n%s\n", string(payLoadB), string(body))
-	fmt.Printf("%s \n%s\n", string(payLoadB), string(body))
+	log.Printf("Product Vairant: %s \n%s\n", string(payLoadB), string(body))
+	fmt.Printf("Product Vairant: %s \n%s\n", string(payLoadB), string(body))
 
 }

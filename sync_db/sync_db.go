@@ -110,7 +110,7 @@ func GetItemFromCsv(fileReader io.Reader, ch chan *types.PortalCSV,sleep bool) {
 		item.Price = row[3]
 		item.ComparePrice = row[4]
 		if sleep{
-			time.Sleep(time.Millisecond * 333)
+			time.Sleep(time.Millisecond * 500)
 		}
 		ch <- &item
 	}
@@ -186,22 +186,25 @@ func Init_kv_db() {
 
 func CreateTempTable(){
 	SQL_DB.MustExec(`
-	CREATE TABLE #ItemTemp
-(
-    VariantID              INT        NULL,
-    Quantity               DECIMAL(18,4) NULL,
-    Title                  NVARCHAR(255),
-    Code                   NVARCHAR(50),
-    ItemID                 INT,
-    Fee                    DECIMAL(18,4),
-    SaleInvoiceItemID      INT         NULL,
-    SaleInvoiceNumber      NVARCHAR(50) NULL
-);
-GO
-CREATE NONCLUSTERED INDEX IX_ItemTemp_ItemID
-ON #ItemTemp (ItemID)
-INCLUDE (VariantID, Quantity, Fee);
-GO;
-
-	`)
+		IF OBJECT_ID('tempdb..#ItemTemp') IS NOT NULL
+		BEGIN
+		DROP TABLE #ItemTemp
+		END
+			CREATE TABLE #ItemTemp
+		(
+			VariantID              INT        NULL,
+			Quantity               DECIMAL(18,4) NULL,
+			Title                  NVARCHAR(255),
+			Code                   NVARCHAR(50),
+			ItemID                 INT,
+			Fee                    DECIMAL(18,4),
+			SaleInvoiceItemID      INT         NULL,
+			SaleInvoiceNumber      NVARCHAR(50) NULL
+		);
+		GO
+		CREATE NONCLUSTERED INDEX IX_ItemTemp_ItemID
+		ON #ItemTemp (ItemID)
+		INCLUDE (VariantID, Quantity, Fee);
+		GO `
+	)
 }

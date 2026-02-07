@@ -398,8 +398,7 @@ func GetItemDetailByCode(portal *types.PortalCSV,fiscalPeriod int64) (*types.Das
 	dashtOrPortal.Dasht = &item
 	dashtOrPortal.Portal = portal
 	query := fmt.Sprintf(
-		`/* 2. Populate temp table */
-INSERT INTO #ItemTemp
+		` INSERT INTO #ItemTemp
 (
     VariantID,
     Quantity,
@@ -416,8 +415,6 @@ SELECT
     i.Title,
     i.Code,
     i.ItemID,
-
-    /* Max Fee logic */
     (
         SELECT MAX(val)
         FROM (VALUES
@@ -446,7 +443,7 @@ OUTER APPLY
         AND ISNULL(SII.Discount,0) < SII.Fee
         AND SI.RemainingPrice = 0
         AND SII.IsReturn = 0
-    ORDER BY SI.SaleInvoiceDate DESC
+    ORDER BY SI.Date DESC
 ) AS IItem
 
 OUTER APPLY
@@ -461,7 +458,7 @@ OUTER APPLY
         AND ISNULL(PII.Discount,0) < PII.Fee
         AND Puri.RemainingPrice = 0
         AND PII.IsReturn = 0
-    ORDER BY Puri.PurchaseInvoiceDate DESC
+    ORDER BY Puri.Date DESC
 ) AS PurItem
 
 LEFT JOIN [pos].ItemSalePrice AS SaleItem WITH (NOLOCK)
@@ -471,17 +468,18 @@ LEFT JOIN VariantsItems AS VI WITH (NOLOCK)
     ON VI.ItemID = i.Code
 
 WHERE
-    (i.Code = N'%s' OR i.BarCode = N'%s')
-    AND itemS.FiscalPeriodRef = %d;
-
+    (i.Code = N'%d' OR i.BarCode = N'%d')
+    AND itemS.FiscalPeriodRef = 9;
+    GO
   SELECT  
+  TOP (1)
 	ISNULL(VariantID,0),
     Quantity,
     Title,
     Code,
     ItemID,
     Fee
-FROM cte `, portal.Sku, portal.Sku,fiscalPeriod)
+FROM  #ItemTemp where Code =N'%d'`, portal.Sku, portal.Sku,fiscalPeriod)
 
 	if Debug {
 		log.Printf("[INFO]: %s\n", query)
@@ -504,33 +502,91 @@ FROM cte `, portal.Sku, portal.Sku,fiscalPeriod)
 func GetItemDetailByPortalExactName(portal *types.PortalCSV, fiscalPeriod int64) (*types.DashtOrPortal, error) {
 	var dashtOrPortal types.DashtOrPortal
 	
+
 	query := fmt.Sprintf(`
-	with cte as (SELECT VI.VariantID,itemS.Quantity, i.Title,i.Code,i.ItemID,
-		(select max(val) from (VALUES( (IItem.Fee)),  (PurItem.Fee) , (SaleItem.Price0) ) as T(val)) as Fee,
-		IItem.SaleInvoiceItemID,IItem.SaleInvoiceNumber
-		 from [Pos].Item as i WITH (NOLOCK)
-	left JOIN [POS].ItemStockSummary as itemS WITH (NOLOCK) on itemS.ItemRef = i.ItemID 
-	Outer APPLY (select TOP 1 SII.* from [POS].vwAllSaleInvoiceItem SII  WITH (NOLOCK)
-left join [pos].SaleInvoice Si WITH (NOLOCK) on Si.SaleInvoiceID = SII.SaleInvoiceRef
- where ItemRef = i.ItemID and (Si.State=1 or Si.State=3)  
-		and ISNULL(SII.Discount,0)<SII.Fee and Si.RemainingPrice =0 
- and SII.IsReturn=0 order by SaleInvoiceDate DESC) as IItem  
-Outer APPLY (select TOP 1 PII.* from [POS].vwAllPurchaseInvoiceItem PII WITH (NOLOCK)
-left join [pos].PurchaseInvoice Puri WITH (NOLOCK)
- on Puri.PurchaseInvoiceID = PII.PurchaseInvoiceRef
-where  ItemRef = i.ItemID and (Puri.State=1 or Puri.State=3) and ISNULL(PII.Discount,0)<PII.Fee
-		and Puri.RemainingPrice =0 and PII.IsReturn=0 order by PurchaseInvoicedate DESC) as PurItem 
-	left join [pos].ItemSalePrice as SaleItem WITH (NOLOCK) on SaleItem.ItemRef = i.ItemID
-	left join VariantsItems as VI WITH (NOLOCK) on VI.ItemID = i.Code 
-			WHERE REPLACE(Title,N' ',N'') like REPLACE('%%%s',' ','')
-			AND itemS.FiscalPeriodRef =%d)
-	  SELECT  ISNULL(VariantID,0),
-	    Quantity,
-	    Title,
-	    Code,
-	    ItemID,
-	    Fee
-	FROM cte`, portal.Name,fiscalPeriod)
+	INSERT INTO #ItemTemp
+(
+    VariantID,
+    Quantity,
+    Title,
+    Code,
+    ItemID,
+    Fee,
+    SaleInvoiceItemID,
+    SaleInvoiceNumber
+)
+SELECT
+    VI.VariantID,
+    itemS.Quantity,
+    i.Title,
+    i.Code,
+    i.ItemID,
+    (
+        SELECT MAX(val)
+        FROM (VALUES
+                (IItem.Fee),
+                (PurItem.Fee),
+                (SaleItem.Price0)
+             ) AS T(val)
+    ) AS Fee,
+
+    IItem.SaleInvoiceItemID,
+    IItem.SaleInvoiceNumber
+FROM [pos].Item AS i WITH (NOLOCK)
+
+LEFT JOIN [POS].ItemStockSummary AS itemS WITH (NOLOCK)
+    ON itemS.ItemRef = i.ItemID
+
+OUTER APPLY
+(
+    SELECT TOP (1) SII.*
+    FROM [POS].vwAllSaleInvoiceItem AS SII WITH (NOLOCK)
+    INNER JOIN [pos].SaleInvoice AS SI WITH (NOLOCK)
+        ON SI.SaleInvoiceID = SII.SaleInvoiceRef
+    WHERE
+        SII.ItemRef = i.ItemID
+        AND (SI.State = 1 OR SI.State = 3)
+        AND ISNULL(SII.Discount,0) < SII.Fee
+        AND SI.RemainingPrice = 0
+        AND SII.IsReturn = 0
+    ORDER BY SI.Date DESC
+) AS IItem
+
+OUTER APPLY
+(
+    SELECT TOP (1) PII.*
+    FROM [POS].vwAllPurchaseInvoiceItem AS PII WITH (NOLOCK)
+    INNER JOIN [pos].PurchaseInvoice AS Puri WITH (NOLOCK)
+        ON Puri.PurchaseInvoiceID = PII.PurchaseInvoiceRef
+    WHERE
+        PII.ItemRef = i.ItemID
+        AND (Puri.State = 1 OR Puri.State = 3)
+        AND ISNULL(PII.Discount,0) < PII.Fee
+        AND Puri.RemainingPrice = 0
+        AND PII.IsReturn = 0
+    ORDER BY Puri.Date DESC
+) AS PurItem
+
+LEFT JOIN [pos].ItemSalePrice AS SaleItem WITH (NOLOCK)
+    ON SaleItem.ItemRef = i.ItemID
+
+LEFT JOIN VariantsItems AS VI WITH (NOLOCK)
+    ON VI.ItemID = i.Code
+
+WHERE
+    REPLACE(Title,N' ',N'') like REPLACE('%%%s',' ','')
+    AND itemS.FiscalPeriodRef = %d;
+    GO
+  SELECT  
+  TOP 1
+	ISNULL(VariantID,0),
+    Quantity,
+    Title,
+    Code,
+    ItemID,
+    Fee
+FROM  #ItemTemp where REPLACE(Title,N' ',N'') like REPLACE('%%%s',' ','')
+`, portal.Name,fiscalPeriod)
 	if Debug {
 		log.Print(query)
 	}

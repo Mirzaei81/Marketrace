@@ -692,7 +692,7 @@ func GetAndUpdateItemFromCsv(token string, csvFile *os.File) {
 		for dashtItem := range itemCH {
 			log.Print(dashtItem.ToString())
 			if dashtItem.Dasht != nil {
-				time.Sleep(time.Millisecond * 333)
+				time.Sleep(time.Millisecond * 500)
 				if types.ToInt(dashtItem.Dasht.Quantity)==0{
 					zeros =  append(zeros,dashtItem.Dasht)
 				}

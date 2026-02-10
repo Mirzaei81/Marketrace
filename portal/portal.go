@@ -709,6 +709,9 @@ func GetAndUpdateItemFromCsv(token string, csvFile *os.File) {
 				completeWrite.Write(dashtItem.Dasht.ToStringList())
 				completeWrite.Flush()
 				dashConsumer.Add(1)
+				if types.Debug {
+					log.Printf("Updating variant(%s)\n", dashtItem.Dasht.ToString())
+				}
 				go update.UpdatePortalVariantSKU(token, dashtItem.Dasht, dashConsumer)
 			}
 		}
@@ -748,7 +751,7 @@ func GetAndUpdateItemFromCsv(token string, csvFile *os.File) {
 
 	for _, z := range zeros {
 		if types.Debug {
-			log.Println("Push Top Queue %s", z.ToString())
+			log.Printf("Push Top Queue %s\n", z.ToString())
 		}
 		dashConsumer.Add(1)
 		go update.UpdatePortalVariantSKU(token, z, dashConsumer)

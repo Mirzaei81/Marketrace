@@ -16,6 +16,105 @@ var DASHT_ACCESS_TOKEN = "DASHT_ACCESS_TOKEN"
 var LAST_PORTAL_PURCHASE = "LAST_PORTAL_PURCHASE"
 var Debug = false
 
+type PortalProductResult struct {
+	Success bool          `json:"success"`
+	Product PortalProduct `json:"product"`
+}
+type PortalProduct struct {
+	ID                int      `json:"id"`
+	Version           string   `json:"version"`
+	Title             string   `json:"title"`
+	Caption           string   `json:"caption"`
+	Description       string   `json:"description"`
+	Image             string   `json:"image"`
+	Slug              string   `json:"slug"`
+	URL               string   `json:"url"`
+	Rate              any      `json:"rate"`
+	RateCount         any      `json:"rate_count"`
+	Password          any      `json:"password"`
+	Layout            *string  `json:"layout"`
+	CommentingEnabled bool     `json:"commenting_enabled"`
+	MetaTitle         any      `json:"meta_title"`
+	MetaDescription   any      `json:"meta_description"`
+	MetaKeywords      any      `json:"meta_keywords"`
+	MetaRobots        any      `json:"meta_robots"`
+	CanonicalURL      any      `json:"canonical_url"`
+	Redirect          any      `json:"redirect"`
+	Stats             int      `json:"stats"`
+	Comments          any      `json:"comments"`
+	Position          int      `json:"position"`
+	Status            []string `json:"status"`
+	Contents          any      `json:"contents"`
+	Fields            any      `json:"fields"`
+	Images            []struct {
+		Path  string `json:"path"`
+		Title any    `json:"title"`
+	} `json:"images"`
+	Category   any `json:"category"`
+	Categories []struct {
+		ID     int    `json:"id"`
+		Title  string `json:"title"`
+		URL    string `json:"url"`
+		Weight int    `json:"weight"`
+	} `json:"categories"`
+	Filters    []any `json:"filters"`
+	Attributes any   `json:"attributes"`
+	Variants   []struct {
+		ID           int      `json:"id"`
+		ProductID    int      `json:"product_id"`
+		Title        string   `json:"title"`
+		Price        int      `json:"price"`
+		ComparePrice int      `json:"compare_price"`
+		Tax          any      `json:"tax"`
+		Shipping     any      `json:"shipping"`
+		Weight       int      `json:"weight"`
+		Length       any      `json:"length"`
+		Width        any      `json:"width"`
+		Height       any      `json:"height"`
+		Stock        int      `json:"stock"`
+		Minimum      int      `json:"minimum"`
+		Maximum      int      `json:"maximum"`
+		Sku          string   `json:"sku"`
+		Image        string   `json:"image"`
+		Type         string   `json:"type"`
+		Status       []string `json:"status"`
+		Files        any      `json:"files"`
+	} `json:"variants"`
+	Relates    any `json:"relates"`
+	Expiration any `json:"expiration"`
+	Published  struct {
+		Year      string `json:"year"`
+		Month     string `json:"month"`
+		MonthName string `json:"month_name"`
+		Day       string `json:"day"`
+		Date      string `json:"date"`
+		Time      string `json:"time"`
+		Universal string `json:"universal"`
+		Timestamp int    `json:"timestamp"`
+		Subtract  string `json:"subtract"`
+		Past      bool   `json:"past"`
+	} `json:"published"`
+	Created struct {
+		Year      string `json:"year"`
+		Month     string `json:"month"`
+		MonthName string `json:"month_name"`
+		Day       string `json:"day"`
+		Date      string `json:"date"`
+		Time      string `json:"time"`
+		Universal string `json:"universal"`
+		Timestamp int    `json:"timestamp"`
+		Subtract  string `json:"subtract"`
+		Past      bool   `json:"past"`
+	} `json:"created"`
+	Creator struct {
+		ID       int    `json:"id"`
+		Username string `json:"username"`
+		Name     string `json:"name"`
+		Nickname string `json:"nickname"`
+		Avatar   any    `json:"avatar"`
+	} `json:"creator"`
+}
+
 type OrderDetail struct {
 	Success bool `json:"success"`
 	Order   struct {

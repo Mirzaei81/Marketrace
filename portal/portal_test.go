@@ -102,7 +102,8 @@ func TestCreateItemOne(t *testing.T) {
 	ch := make(chan types.ItemDetail)
 	testDate := "2023/01/01"
 
-	go dasht.GetItemByCreationDate(testDate, ch, true)
+	lastFiscal, _ := dasht.GetLatestFiascal()
+	go dasht.GetItemByCreationDate(testDate, ch, int(lastFiscal), true)
 
 	count := 0
 	for item := range ch {

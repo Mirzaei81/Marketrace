@@ -16,9 +16,11 @@ import (
 	"sync"
 )
 
+var SKIP_LAYOUT = "INVALID"
 var SetPrice bool
 var Throttle *utils.Throttler
 var SkipStatsName string
+var Layout string
 
 func Update_Variants(token string, variant_id string, stock int, sku string, price int, fieldName string, wg *sync.WaitGroup) {
 	if wg != nil {
@@ -39,6 +41,11 @@ func Update_Variants(token string, variant_id string, stock int, sku string, pri
 		variant.Price = int(price / 10) //TODO :check
 		variant.ComparePrice = int(price / 10)
 	}
+
+	if Layout != SKIP_LAYOUT {
+		go updateProductLayout(token, variant.ProductID)
+	}
+
 	status := variant.Status
 	for i, val := range status {
 		if val == fieldName {
@@ -71,6 +78,19 @@ func Update_Variants(token string, variant_id string, stock int, sku string, pri
 	defer res.Body.Close()
 }
 
+func updateProductLayout(token string, product_id int) {
+	prod, err := getProduct(token, product_id)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	if len(Layout) == 0 {
+		prod.Layout = nil
+	} else {
+		prod.Layout = &Layout
+	}
+	go updateProduct(token, prod)
+}
 func getVariant(token string, variantid string) *types.Variant {
 	url := fmt.Sprintf("%ssite/api/v1/manage/store/products/variants/%s", types.PORTAL_BASE_URL, variantid)
 	method := "GET"
@@ -105,6 +125,69 @@ func getVariant(token string, variantid string) *types.Variant {
 	return &variant.Variant
 }
 
+func updateProduct(token string, prod types.PortalProduct) {
+	var prodRes types.PortalProductResult
+	url := fmt.Sprintf("https://modernhyperindustry.com//site/api/v1/manage/store/products/%d", prod.ID)
+	method := "PUT"
+
+	client := &http.Client{}
+	req, err := http.NewRequest(method, url, nil)
+
+	if err != nil {
+		log.Println(err)
+	}
+	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", token))
+
+	res, err := client.Do(req)
+	if err != nil {
+		log.Println(err)
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		fmt.Println(err)
+	}
+	err = json.Unmarshal(body, &prodRes)
+	if err != nil {
+		log.Println(err)
+	}
+}
+func getProduct(token string, product_id int) (types.PortalProduct, error) {
+
+	var prod types.PortalProduct
+	url := fmt.Sprintf("https://modernhyperindustry.com/site/api/v1/manage/store/products/%d", product_id)
+	method := "GET"
+
+	client := &http.Client{}
+	req, err := http.NewRequest(method, url, nil)
+
+	if err != nil {
+		log.Println(err)
+		return prod, err
+	}
+	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", token))
+
+	res, err := client.Do(req)
+	if err != nil {
+		log.Println(err)
+		return prod, err
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		fmt.Println(err)
+		return prod, err
+	}
+	var prod_res types.PortalProductResult
+	err = json.Unmarshal(body, &prod_res)
+	if err != nil {
+		return prod, err
+	}
+	return prod_res.Product, nil
+}
+
 func UpdatePortalVariantSKU(token string, detail *types.ItemDetail, wg *sync.WaitGroup) {
 	defer wg.Done()
 	if Throttle == nil {
@@ -112,8 +195,11 @@ func UpdatePortalVariantSKU(token string, detail *types.ItemDetail, wg *sync.Wai
 	}
 	url := fmt.Sprintf("%ssite/api/v1/manage/store/products/variants/%d", types.PORTAL_BASE_URL, detail.VariantID)
 	variant := getVariant(token, strconv.FormatInt(detail.VariantID, 10))
-	if variant == nil {
+	if variant == nil || (len(SkipStatsName) != 0 && slices.Contains(variant.Status, SkipStatsName)) {
 		return
+	}
+	if Layout != SKIP_LAYOUT {
+		go updateProductLayout(token, variant.ProductID)
 	}
 	method := "PUT"
 	tomanPrice := types.ToInt(detail.Fee) / 10

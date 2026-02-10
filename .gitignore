@@ -7,3 +7,5 @@ download/
 *log.gz
 *rar
 *.exe
+main
+*.test

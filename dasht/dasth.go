@@ -248,25 +248,6 @@ func GetOrCreateCustomer(customer CustomersBody, accessToken string) (*CustomerR
 	return &customerResp, nil
 }
 
-// func SyncPortalVariantWithDashtCode(token string, variantID string, portalVariant *types.PortalCSV, errch chan *types.PortalCSV, wg *sync.WaitGroup) {
-// 	defer wg.Done()
-// 	wg.Add(1)
-// 	item, err := GetItemDetailByCode(portalVariant, -1)
-// 	if err != nil {
-// 		log.Printf("Error while fetching detail for item %s Error: %s ", portalVariant.Sku, err)
-// 		return
-// 	}
-// 	wg.Add(1)
-// 	if item.Dasht != nil {
-// 		go SyncPortal.Update_Variants(
-// 			token,
-// 			variantID, types.ToInt(item.Dasht.Quantity), // db qoh is in form of float
-// 			item.Dasht.Code, types.ToInt(item.Dasht.Fee),"", wg,
-// 		)
-// 	}
-
-// }
-
 func SyncPortalByDashtOrders(token string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -291,16 +272,18 @@ func ListAllItemsChan(ch chan types.ItemDetail, fiscalYear int) {
 	defer close(ch)
 	rows, err := sync_db.SQL_DB.Query(
 		` SELECT  
+
         (
         SELECT MAX(val)
-        FROM (VALUES
+        FROM (select MAX(val) from (values(itemS.Quantity),(0)) as T(val) ),
+ Item.[ItemTitle],Item.[ItemCode],
+        Item.[ItemRef],
+		(VALUES
                 (SaleItem.MainUnitFee),
                 (Item.LastPurchasePrice),
                 (Item.DefaultPrice)
              ) AS T(val)
-    ) AS Fee,(select MAX(val) from (values(itemS.Quantity),(0)) as T(val) ),
-        Item.[ItemRef], Item.[ItemCode], Item.[ItemTitle]
-    FROM POS.[vwItemSalePrice] as Item
+    ) AS Fee     FROM POS.[vwItemSalePrice] as Item
     LEFT JOIN [POS].ItemStockSummary AS itemS WITH (NOLOCK)
         ON itemS.ItemRef = Item.ItemRef and FiscalPeriodRef = ?
     OUTER APPLY
@@ -334,36 +317,40 @@ func ListAllItemsChan(ch chan types.ItemDetail, fiscalYear int) {
 		return
 	}
 }
-func ListAllItemsSync() ([]types.ItemDetail, error) {
+func ListAllItemsSync(fiscalYear int) ([]types.ItemDetail, error) {
 	rows, err := sync_db.SQL_DB.Query(
-		`with cte as (SELECT  VI.VariantID,itemS.Quantity, i.Title,
-		(select max(val) from (VALUES( (IItem.Fee)),  (PurItem.Fee) , (SaleItem.Price0) ) as T(val)) as Fee,
-		i.Code,i.ItemID,IItem.SaleInvoiceNumber
-		from [pos].Item as i 
-left JOIN [POS].ItemStockSummary as itemS on itemS.ItemRef = i.ItemID
-Outer APPLY (select TOP 1 SII.* from [POS].vwAllSaleInvoiceItem SII 
-left join [pos].SaleInvoice Si on Si.SaleInvoiceID = SII.SaleInvoiceRef
- where ItemRef = i.ItemID and (Si.State=1 or Si.State=3) 
-		and ISNULL(SII.Discount,0)<SII.Fee and Si.RemainingPrice =0 
-		and SII.IsReturn=0 order by SaleInvoiceDate DESC) as IItem 
-Outer APPLY (select TOP 1 PII.* from [POS].vwAllPurchaseInvoiceItem PII
-left join [pos].PurchaseInvoice Puri on Puri.PurchaseInvoiceID = PII.PurchaseInvoiceRef
-where  ItemRef = i.ItemID and (Puri.State=1 and Puri.State=3)and ISNULL(PII.Discount,0)<PII.Fee
-		and Puri.RemainingPrice =0 and PII.IsReturn=0 order by PurchaseInvoicedate DESC) as PurItem 
-left join [pos].ItemSalePrice as SaleItem on SaleItem.ItemRef = i.ItemID  
-left join VariantsItems as VI on VI.ItemID = i.Code
-WHERE itemS.FiscalPeriodRef =(select TOP 1 FiscalPeriodID from [FMK].FiscalPeriod order by FiscalPeriodID desc )
-	)
-  SELECT  
-	ISNULL(VariantID,0),
-    Quantity,
-    Title,
-    Code,
-    ItemID,
-    Fee
-	 from cte
-ORDER BY FEE,SaleInvoiceNumber DESC;`,
-	)
+		` SELECT  
+		VI.VariantID,(select MAX(val) from (values(itemS.Quantity),(0)) as T(val) ),
+ Item.[ItemTitle], Item.[ItemCode], Item.[ItemRef],
+        (
+        SELECT MAX(val)
+        FROM (VALUES
+                (SaleItem.MainUnitFee),
+                (Item.LastPurchasePrice),
+                (Item.DefaultPrice)
+             ) AS T(val)
+    ) AS Fee
+    FROM POS.[vwItemSalePrice] as Item
+    LEFT JOIN [POS].ItemStockSummary AS itemS WITH (NOLOCK)
+        ON itemS.ItemRef = Item.ItemRef and FiscalPeriodRef = ?
+	Left join VariantsItems as VI on Item.ItemCode = Vi.ItemID
+
+    OUTER APPLY
+     (SELECT TOP 1 
+    MainUnitFee
+    FROM POS.SaleInvoiceItem SII
+        INNER JOIN POS.SaleInvoice SI ON SII.SaleInvoiceRef = SI.SaleInvoiceID  
+	    AND SI.IsReturn = 0
+	    AND SI.[State] = 1 -- Only registered vouchers
+	    AND SI.IsOnConsignment = 0
+     AND SI.PartyRef = -5
+    INNER JOIN POS.Item I ON SII.ItemRef = I.ItemID
+    LEFT JOIN POS.ItemSubUnit ISU ON SII.ItemSubUnitRef = ISU.ItemSubUnitID
+        WHERE  SII.ItemRef = Item.ItemRef AND SII.Fee IS NOT NULL
+     ORDER BY SI.Date DESC, SII.SaleInvoiceItemID DESC
+     ) AS SaleItem 
+     where IsMainUnit =1
+		`, fiscalYear)
 	if err != nil {
 		return nil, err
 	}
@@ -401,17 +388,21 @@ func GetItemDetailByCode(portal *types.PortalCSV, fiscalPeriod int64) (*types.Da
 	dashtOrPortal.Portal = portal
 
 	err := sync_db.SQL_DB.QueryRow(
-		`SELECT MAX(val)
+		`SELECT ISNULL(VI.VariantID,0),
+(select MAX(val) from (values(itemS.Quantity),(0)) as T(val)) as Quantity ,
+ Item.[ItemTitle], Item.[ItemCode], Item.[ItemRef],
+        (
+        SELECT MAX(val)
         FROM (VALUES
                 (SaleItem.MainUnitFee),
                 (Item.LastPurchasePrice),
                 (Item.DefaultPrice)
              ) AS T(val)
-    ) AS Fee,
-	 (select MAX(val) from (values(itemS.Quantity),(0)) as T(val) ),
+    ) AS Fee
     FROM POS.[vwItemSalePrice] as Item
-    LEFT JOIN [POS].ItemStockSummary AS itemS WITH (NOLOCK)
+    LEFT JOIN [POS].ItemStockSummary AS itemS 
         ON itemS.ItemRef = Item.ItemRef and FiscalPeriodRef = ?
+	Left join VariantsItems as VI on Item.ItemCode = Vi.ItemID
     OUTER APPLY
      (SELECT TOP 1 
     MainUnitFee
@@ -426,8 +417,10 @@ func GetItemDetailByCode(portal *types.PortalCSV, fiscalPeriod int64) (*types.Da
         WHERE  SII.ItemRef = Item.ItemRef AND SII.Fee IS NOT NULL
      ORDER BY SI.Date DESC, SII.SaleInvoiceItemID DESC
      ) AS SaleItem 
-     where ItemCode = ? and IsMainUnit =1
-`, fiscalPeriod, portal.Sku).Scan(&item.VariantID, &item.Quantity, &item.Title, &item.Code, &item.ItemID, &item.Fee)
+     where ItemCode = ? and IsMainUnit =1 `, fiscalPeriod, portal.Sku).Scan(&item.VariantID, &item.Quantity, &item.Title, &item.Code, &item.ItemID, &item.Fee)
+	if err != nil {
+		log.Println(err)
+	}
 	if item.VariantID == 0 {
 		variantID, err := strconv.ParseInt(portal.VariantID, 10, 64)
 		if err != nil {
@@ -446,18 +439,21 @@ func GetItemDetailByPortalExactName(portal *types.PortalCSV, fiscalPeriod int64)
 	var dashtOrPortal types.DashtOrPortal
 
 	var item types.ItemDetail
-	err := sync_db.SQL_DB.QueryRow(`
+	err := sync_db.SQL_DB.QueryRow(` SELECT ISNULL(VI.VariantID,0),
+(select MAX(val) from (values(itemS.Quantity),(0)) as T(val)) as Quantity ,
+ Item.[ItemTitle], Item.[ItemCode], Item.[ItemRef],
+        (
         SELECT MAX(val)
         FROM (VALUES
                 (SaleItem.MainUnitFee),
                 (Item.LastPurchasePrice),
                 (Item.DefaultPrice)
              ) AS T(val)
-    ) AS Fee,
-	 (select MAX(val) from (values(itemS.Quantity),(0)) as T(val) ),
+    ) AS Fee
     FROM POS.[vwItemSalePrice] as Item
-    LEFT JOIN [POS].ItemStockSummary AS itemS WITH (NOLOCK)
+    LEFT JOIN [POS].ItemStockSummary AS itemS 
         ON itemS.ItemRef = Item.ItemRef and FiscalPeriodRef = ?
+	Left join VariantsItems as VI on Item.ItemCode = Vi.ItemID
     OUTER APPLY
      (SELECT TOP 1 
     MainUnitFee
@@ -472,8 +468,7 @@ func GetItemDetailByPortalExactName(portal *types.PortalCSV, fiscalPeriod int64)
         WHERE  SII.ItemRef = Item.ItemRef AND SII.Fee IS NOT NULL
      ORDER BY SI.Date DESC, SII.SaleInvoiceItemID DESC
      ) AS SaleItem 
-     where REPLACE(Item.ItemTitle,' ','') = Replace(?,' ','') and IsMainUnit =1
-`, fiscalPeriod, portal.Name).Scan(&item.VariantID, &item.Quantity, &item.Title, &item.Code, &item.ItemID, &item.Fee)
+     where REPLACE(Item.ItemTitle,' ','') = Replace(?,' ','') and IsMainUnit =1 `, fiscalPeriod, portal.Name).Scan(&item.VariantID, &item.Quantity, &item.Title, &item.Code, &item.ItemID, &item.Fee)
 	if err != nil {
 		return nil, err
 	}
@@ -677,17 +672,21 @@ func GetItemByCreationDate(date string, ch chan types.ItemDetail, fiscalPeriod i
 	}
 	defer close(ch)
 	rows, err := sync_db.SQL_DB.Query(` 
+        SELECT VI.VariantID,
+(select MAX(val) from (values(itemS.Quantity),(0)) as T(val)) as Quantity ,
+ Item.[ItemTitle], Item.[ItemCode], Item.[ItemRef],
+        (
         SELECT MAX(val)
         FROM (VALUES
                 (SaleItem.MainUnitFee),
                 (Item.LastPurchasePrice),
                 (Item.DefaultPrice)
              ) AS T(val)
-    ) AS Fee,
-	 (select MAX(val) from (values(itemS.Quantity),(0)) as T(val) ),
+    ) AS Fee
     FROM POS.[vwItemSalePrice] as Item
-    LEFT JOIN [POS].ItemStockSummary AS itemS WITH (NOLOCK)
+    LEFT JOIN [POS].ItemStockSummary AS itemS 
         ON itemS.ItemRef = Item.ItemRef and FiscalPeriodRef = ?
+	Left join VariantsItems as VI on Item.ItemCode = Vi.ItemID
     OUTER APPLY
      (SELECT TOP 1 
     MainUnitFee

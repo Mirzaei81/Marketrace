@@ -7,6 +7,7 @@ import (
 	"giv/types"
 	"giv/update"
 	"giv/utils"
+	"io"
 	"log"
 	"math"
 	"net/http"
@@ -52,6 +53,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("Error while Loading .env file  %s \n", err)
 	}
+	vlayout, found := os.LookupEnv("LAYOUT")
+	if !found {
+		update.Layout = update.SKIP_LAYOUT
+	} else {
+		update.Layout = vlayout
+	}
 
 	var windowsAuth = flag.Bool("auth", false, "should use windows authnication to connect to mssql")
 	var shouldDebug = flag.Bool("debug", false, "should debug")
@@ -67,7 +74,7 @@ func main() {
 	update.SkipStatsName = *skipStats
 	update.Throttle = &utils.Throttler{
 		Max:      1,
-		Duration: time.Duration(math.Ceil(1.0/(float64)(*throttle)) * float64(time.Millisecond)),
+		Duration: time.Duration(math.Ceil(1000.0/(float64)(*throttle)) * float64(time.Millisecond)),
 	}
 	if *throttle <= 0 {
 		log.Fatal("Throthle can't be zero/negetive ")
@@ -98,13 +105,22 @@ func main() {
 	flag.Parse()
 
 	update.SetPrice = *setPrice
-	log.SetOutput(&lumberjack.Logger{
+
+	var multi io.Writer
+	logger := lumberjack.Logger{
 		Filename:   *logFile,
 		MaxSize:    10,
 		MaxBackups: 5,
 		MaxAge:     10,
 		Compress:   true,
-	})
+	}
+	if *shouldDebug {
+		multi = io.MultiWriter(&logger, os.Stdout)
+
+	} else {
+		multi = &logger
+	}
+	log.SetOutput(multi)
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	dasht.Debug = *shouldDebug
 	types.Debug = *shouldDebug

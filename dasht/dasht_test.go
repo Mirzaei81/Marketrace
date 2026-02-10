@@ -58,7 +58,11 @@ func TestLogin_OK(t *testing.T) {
 	t.Logf("accToken %s,orders: %s", resp.AccessToken, body)
 }
 func TestListAllItems(t *testing.T) {
-	allItems, err := ListAllItemsSync()
+	fiscal, err := GetLatestFiascal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	allItems, err := ListAllItemsSync(int(fiscal))
 	if err != nil {
 		t.Errorf("Error while ListingElements %s", err.Error())
 	}

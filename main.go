@@ -6,7 +6,9 @@ import (
 	"giv/portal"
 	"giv/types"
 	"giv/update"
+	"giv/utils"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
@@ -51,15 +53,25 @@ func main() {
 		log.Fatalf("Error while Loading .env file  %s \n", err)
 	}
 
-	var windowsAuth = flag.Bool("auth", true, "should use windows authnication to connect to mssql")
-	var shouldDebug = flag.Bool("debug", true, "should debug")
+	var windowsAuth = flag.Bool("auth", false, "should use windows authnication to connect to mssql")
+	var shouldDebug = flag.Bool("debug", false, "should debug")
 	var setPrice = flag.Bool("setPrice", false, "should update portal price while updating")
 	var mode = flag.String("mode", "order", "At which mode does program run on? (order|stock|local|bootstrap|stats) ")
-	var csv_path = flag.String("csv", "./bk.csv", "Path for csv to bulk insert date in table VariantItems")
+	var csv_path = flag.String("csv", "", "Path for csv to bulk insert date in table VariantItems")
 	var memLimit = flag.String("mem", "5G", "Memory in Format of %d[G|M]")
 	var shutdownHour = flag.Int("hour", 7, "Set time when app get's shut down:[0-24) -1 for always on")
 	var logFile = flag.String("logName", "main.log", "name of ther output logfile")
 	var fieldName = flag.String("fieldname", "cash_on_delivery", "field name to remove(cash_on_delivery)")
+	var throttle = flag.Int("throtle", 3, "Req/Sec Default(3): Can't be Deciamal or lower than 1")
+	var skipStats = flag.String("SkipStatus", "featured", "If the staus exists skip the updating product")
+	update.SkipStatsName = *skipStats
+	update.Throttle = &utils.Throttler{
+		Max:      1,
+		Duration: time.Duration(math.Ceil(1.0/(float64)(*throttle)) * float64(time.Millisecond)),
+	}
+	if *throttle <= 0 {
+		log.Fatal("Throthle can't be zero/negetive ")
+	}
 	if *shutdownHour != -1 {
 		go func() {
 			for range time.Tick(time.Hour*1 + 1*time.Minute) {
@@ -123,21 +135,18 @@ func main() {
 		{
 			go portal.SyncDashtByPortalOrders(accToken, token, wg)
 			for range time.Tick(time.Minute * 5) {
-				log.Printf("Syncing Begineing ...\n")
+				log.Printf("Order Syncing Begineing ...\n")
 				wg.Add(1)
-				//Syncing GIV Items via portal orders
 				go portal.SyncDashtByPortalOrders(accToken, token, wg)
-				//updating portal Product with  giv quantity on hand
-				// go dasht.SyncPortalByDashtOrders(token, wg)
 				wg.Wait()
 			}
 		}
 	case "stock":
 		{
-			portal.SyncVariants(token)
+			portal.SyncVariants(token, *csv_path)
 			for range time.Tick(time.Minute * 35) {
 				log.Println("Sync internal Database From new Portal Entries")
-				portal.SyncVariants(token)
+				portal.SyncVariants(token, *csv_path)
 			}
 		}
 	case "local":
@@ -148,13 +157,17 @@ func main() {
 		portal.GetAndUpdateItemFromCsv(token, f)
 	case "bootstrap":
 		{
-
 			initialDate, found := os.LookupEnv("LAST_CREATED_DATE")
-			if !found {
-				initialDate = "2025/08/23"
-			}
 			ch := make(chan types.ItemDetail)
-			go dasht.GetItemByCreationDate(initialDate, ch, true)
+			lastFiscal, err := dasht.GetLatestFiascal()
+			if !found {
+				if err != nil {
+					log.Fatal(err)
+				}
+				go dasht.ListAllItemsChan(ch, int(lastFiscal))
+			} else {
+				go dasht.GetItemByCreationDate(initialDate, ch, int(lastFiscal), true)
+			}
 			for item := range ch {
 				if item.ItemID != 0 {
 					prod, err := portal.SearchByName(item.Title, token)
@@ -165,7 +178,7 @@ func main() {
 						}
 						go portal.CreateProduct(item, token)
 					} else {
-						go update.Update_Variants(token, strconv.FormatInt(int64(prod.ID), 10), types.ToInt(item.Quantity), strconv.FormatInt(item.ItemID, 10), types.ToInt(item.Fee),"", nil)
+						go update.Update_Variants(token, strconv.FormatInt(int64(prod.ID), 10), types.ToInt(item.Quantity), strconv.FormatInt(item.ItemID, 10), types.ToInt(item.Fee), "", nil)
 						if *shouldDebug {
 							log.Printf("[INFO]: Updating  Variant %s", item.ToString())
 						}
@@ -175,11 +188,14 @@ func main() {
 				}
 			}
 		}
-	case "stats":{
-		f,_ :=  os.Open(*csv_path)
-		portal.UpdateVariantsField(token,f,*fieldName)
-	
-	}
+	case "create_product":
+		{
+		}
+	case "stats":
+		{
+			f, _ := os.Open(*csv_path)
+			portal.UpdateVariantsField(token, f, *fieldName)
+		}
 	default:
 		log.Fatalf("Mode %s is not support please choose (order,stock)", *mode)
 	}

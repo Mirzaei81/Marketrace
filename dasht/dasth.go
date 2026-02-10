@@ -247,6 +247,7 @@ func GetOrCreateCustomer(customer CustomersBody, accessToken string) (*CustomerR
 	}
 	return &customerResp, nil
 }
+
 // func SyncPortalVariantWithDashtCode(token string, variantID string, portalVariant *types.PortalCSV, errch chan *types.PortalCSV, wg *sync.WaitGroup) {
 // 	defer wg.Done()
 // 	wg.Add(1)
@@ -286,36 +287,37 @@ func SyncPortalByDashtOrders(token string, wg *sync.WaitGroup) {
 	// binary.LittleEndian.AppendUint32(buff, lastToken)
 	// sync_db.KV_DB.Write("LASTGIVODER", buff)
 }
-func ListAllItemsChan(ch *chan *types.ItemDetail) {
-	defer close(*ch)
+func ListAllItemsChan(ch chan types.ItemDetail, fiscalYear int) {
+	defer close(ch)
 	rows, err := sync_db.SQL_DB.Query(
-		`with cte as (SELECT  VI.VariantID,itemS.Quantity, i.Title,
-		(select max(val) from (VALUES( (IItem.Fee)),  (PurItem.Fee) , (SaleItem.Price0) ) as T(val)) as Fee,
-		i.Code,i.ItemID,IItem.SaleInvoiceNumber
-		from [pos].Item as i 
-left JOIN [POS].ItemStockSummary as itemS on itemS.ItemRef = i.ItemID
-Outer APPLY (select TOP 1 SII.* from [POS].vwAllSaleInvoiceItem SII 
-left join [pos].SaleInvoice Si on Si.SaleInvoiceID = SII.SaleInvoiceRef
- where ItemRef = i.ItemID and (Si.State=1 or Si.State=3) 
-		and ISNULL(SII.Discount,0)<SII.Fee and Si.RemainingPrice =0 
-		and SII.IsReturn=0 order by SaleInvoiceDate DESC) as IItem 
-Outer APPLY (select TOP 1 PII.* from [POS].vwAllPurchaseInvoiceItem PII
-left join [pos].PurchaseInvoice Puri on Puri.PurchaseInvoiceID = PII.PurchaseInvoiceRef
-where  ItemRef = i.ItemID and (Puri.State=1 and Puri.State=3)and ISNULL(PII.Discount,0)<PII.Fee
-		and Puri.RemainingPrice =0 and PII.IsReturn=0 order by PurchaseInvoicedate DESC) as PurItem 
-left join [pos].ItemSalePrice as SaleItem on SaleItem.ItemRef = i.ItemID  
-left join VariantsItems as VI on VI.ItemID = i.Code
-WHERE itemS.FiscalPeriodRef =(select TOP 1 FiscalPeriodID from [FMK].FiscalPeriod order by FiscalPeriodID desc )
-	)
-  SELECT  
-	ISNULL(VariantID,0),
-    Quantity,
-    Title,
-    Code,
-    ItemID,
-    Fee
-	 from cte
-ORDER BY FEE,SaleInvoiceNumber DESC;`,
+		` SELECT  
+        (
+        SELECT MAX(val)
+        FROM (VALUES
+                (SaleItem.MainUnitFee),
+                (Item.LastPurchasePrice),
+                (Item.DefaultPrice)
+             ) AS T(val)
+    ) AS Fee,(select MAX(val) from (values(itemS.Quantity),(0)) as T(val) ),
+        Item.[ItemRef], Item.[ItemCode], Item.[ItemTitle]
+    FROM POS.[vwItemSalePrice] as Item
+    LEFT JOIN [POS].ItemStockSummary AS itemS WITH (NOLOCK)
+        ON itemS.ItemRef = Item.ItemRef and FiscalPeriodRef = ?
+    OUTER APPLY
+     (SELECT TOP 1 
+    MainUnitFee
+    FROM POS.SaleInvoiceItem SII
+        INNER JOIN POS.SaleInvoice SI ON SII.SaleInvoiceRef = SI.SaleInvoiceID  
+	    AND SI.IsReturn = 0
+	    AND SI.[State] = 1 -- Only registered vouchers
+	    AND SI.IsOnConsignment = 0
+     AND SI.PartyRef = -5
+    INNER JOIN POS.Item I ON SII.ItemRef = I.ItemID
+    LEFT JOIN POS.ItemSubUnit ISU ON SII.ItemSubUnitRef = ISU.ItemSubUnitID
+        WHERE  SII.ItemRef = Item.ItemRef AND SII.Fee IS NOT NULL
+     ORDER BY SI.Date DESC, SII.SaleInvoiceItemID DESC
+     ) AS SaleItem 
+     where IsMainUnit =1`, fiscalYear,
 	)
 	if err != nil {
 		return
@@ -326,7 +328,7 @@ ORDER BY FEE,SaleInvoiceNumber DESC;`,
 		if err := rows.Scan(&item.Quantity, &item.Title, &item.Code, &item.ItemID, &item.Fee); err != nil {
 			return
 		}
-		*ch <- &item
+		ch <- item
 	}
 	if err = rows.Err(); err != nil {
 		return
@@ -383,7 +385,7 @@ ORDER BY FEE,SaleInvoiceNumber DESC;`,
 }
 
 // query automaticly without name matching
-func GetItemDetailByCode(portal *types.PortalCSV,fiscalPeriod int64) (*types.DashtOrPortal, error) {
+func GetItemDetailByCode(portal *types.PortalCSV, fiscalPeriod int64) (*types.DashtOrPortal, error) {
 	var dashtOrPortal types.DashtOrPortal
 	// sanity check
 	if len(portal.Sku) == 0 {
@@ -397,94 +399,35 @@ func GetItemDetailByCode(portal *types.PortalCSV,fiscalPeriod int64) (*types.Das
 	var item types.ItemDetail
 	dashtOrPortal.Dasht = &item
 	dashtOrPortal.Portal = portal
-	query := fmt.Sprintf(
-		` INSERT INTO #ItemTemp
-(
-    VariantID,
-    Quantity,
-    Title,
-    Code,
-    ItemID,
-    Fee,
-    SaleInvoiceItemID,
-    SaleInvoiceNumber
-)
-SELECT
-    VI.VariantID,
-    itemS.Quantity,
-    i.Title,
-    i.Code,
-    i.ItemID,
-    (
-        SELECT MAX(val)
+
+	err := sync_db.SQL_DB.QueryRow(
+		`SELECT MAX(val)
         FROM (VALUES
-                (IItem.Fee),
-                (PurItem.Fee),
-                (SaleItem.Price0)
+                (SaleItem.MainUnitFee),
+                (Item.LastPurchasePrice),
+                (Item.DefaultPrice)
              ) AS T(val)
     ) AS Fee,
-
-    IItem.SaleInvoiceItemID,
-    IItem.SaleInvoiceNumber
-FROM [pos].Item AS i WITH (NOLOCK)
-
-LEFT JOIN [POS].ItemStockSummary AS itemS WITH (NOLOCK)
-    ON itemS.ItemRef = i.ItemID
-
-OUTER APPLY
-(
-    SELECT TOP (1) SII.*
-    FROM [POS].vwAllSaleInvoiceItem AS SII WITH (NOLOCK)
-    INNER JOIN [pos].SaleInvoice AS SI WITH (NOLOCK)
-        ON SI.SaleInvoiceID = SII.SaleInvoiceRef
-    WHERE
-        SII.ItemRef = i.ItemID
-        AND (SI.State = 1 OR SI.State = 3)
-        AND ISNULL(SII.Discount,0) < SII.Fee
-        AND SI.RemainingPrice = 0
-        AND SII.IsReturn = 0
-    ORDER BY SI.Date DESC
-) AS IItem
-
-OUTER APPLY
-(
-    SELECT TOP (1) PII.*
-    FROM [POS].vwAllPurchaseInvoiceItem AS PII WITH (NOLOCK)
-    INNER JOIN [pos].PurchaseInvoice AS Puri WITH (NOLOCK)
-        ON Puri.PurchaseInvoiceID = PII.PurchaseInvoiceRef
-    WHERE
-        PII.ItemRef = i.ItemID
-        AND (Puri.State = 1 OR Puri.State = 3)
-        AND ISNULL(PII.Discount,0) < PII.Fee
-        AND Puri.RemainingPrice = 0
-        AND PII.IsReturn = 0
-    ORDER BY Puri.Date DESC
-) AS PurItem
-
-LEFT JOIN [pos].ItemSalePrice AS SaleItem WITH (NOLOCK)
-    ON SaleItem.ItemRef = i.ItemID
-
-LEFT JOIN VariantsItems AS VI WITH (NOLOCK)
-    ON VI.ItemID = i.Code
-
-WHERE
-    (i.Code = N'%d' OR i.BarCode = N'%d')
-    AND itemS.FiscalPeriodRef = 9;
-    GO
-  SELECT  
-  TOP (1)
-	ISNULL(VariantID,0),
-    Quantity,
-    Title,
-    Code,
-    ItemID,
-    Fee
-FROM  #ItemTemp where Code =N'%d'`, portal.Sku, portal.Sku,fiscalPeriod)
-
-	if Debug {
-		log.Printf("[INFO]: %s\n", query)
-	}
-	err := sync_db.SQL_DB.QueryRow(query).Scan(&item.VariantID, &item.Quantity, &item.Title, &item.Code, &item.ItemID, &item.Fee)
+	 (select MAX(val) from (values(itemS.Quantity),(0)) as T(val) ),
+    FROM POS.[vwItemSalePrice] as Item
+    LEFT JOIN [POS].ItemStockSummary AS itemS WITH (NOLOCK)
+        ON itemS.ItemRef = Item.ItemRef and FiscalPeriodRef = ?
+    OUTER APPLY
+     (SELECT TOP 1 
+    MainUnitFee
+    FROM POS.SaleInvoiceItem SII
+        INNER JOIN POS.SaleInvoice SI ON SII.SaleInvoiceRef = SI.SaleInvoiceID  
+	    AND SI.IsReturn = 0
+	    AND SI.[State] = 1 -- Only registered vouchers
+	    AND SI.IsOnConsignment = 0
+     AND SI.PartyRef = -5
+    INNER JOIN POS.Item I ON SII.ItemRef = I.ItemID
+    LEFT JOIN POS.ItemSubUnit ISU ON SII.ItemSubUnitRef = ISU.ItemSubUnitID
+        WHERE  SII.ItemRef = Item.ItemRef AND SII.Fee IS NOT NULL
+     ORDER BY SI.Date DESC, SII.SaleInvoiceItemID DESC
+     ) AS SaleItem 
+     where ItemCode = ? and IsMainUnit =1
+`, fiscalPeriod, portal.Sku).Scan(&item.VariantID, &item.Quantity, &item.Title, &item.Code, &item.ItemID, &item.Fee)
 	if item.VariantID == 0 {
 		variantID, err := strconv.ParseInt(portal.VariantID, 10, 64)
 		if err != nil {
@@ -501,99 +444,37 @@ FROM  #ItemTemp where Code =N'%d'`, portal.Sku, portal.Sku,fiscalPeriod)
 }
 func GetItemDetailByPortalExactName(portal *types.PortalCSV, fiscalPeriod int64) (*types.DashtOrPortal, error) {
 	var dashtOrPortal types.DashtOrPortal
-	
 
-	query := fmt.Sprintf(`
-	INSERT INTO #ItemTemp
-(
-    VariantID,
-    Quantity,
-    Title,
-    Code,
-    ItemID,
-    Fee,
-    SaleInvoiceItemID,
-    SaleInvoiceNumber
-)
-SELECT
-    VI.VariantID,
-    itemS.Quantity,
-    i.Title,
-    i.Code,
-    i.ItemID,
-    (
+	var item types.ItemDetail
+	err := sync_db.SQL_DB.QueryRow(`
         SELECT MAX(val)
         FROM (VALUES
-                (IItem.Fee),
-                (PurItem.Fee),
-                (SaleItem.Price0)
+                (SaleItem.MainUnitFee),
+                (Item.LastPurchasePrice),
+                (Item.DefaultPrice)
              ) AS T(val)
     ) AS Fee,
-
-    IItem.SaleInvoiceItemID,
-    IItem.SaleInvoiceNumber
-FROM [pos].Item AS i WITH (NOLOCK)
-
-LEFT JOIN [POS].ItemStockSummary AS itemS WITH (NOLOCK)
-    ON itemS.ItemRef = i.ItemID
-
-OUTER APPLY
-(
-    SELECT TOP (1) SII.*
-    FROM [POS].vwAllSaleInvoiceItem AS SII WITH (NOLOCK)
-    INNER JOIN [pos].SaleInvoice AS SI WITH (NOLOCK)
-        ON SI.SaleInvoiceID = SII.SaleInvoiceRef
-    WHERE
-        SII.ItemRef = i.ItemID
-        AND (SI.State = 1 OR SI.State = 3)
-        AND ISNULL(SII.Discount,0) < SII.Fee
-        AND SI.RemainingPrice = 0
-        AND SII.IsReturn = 0
-    ORDER BY SI.Date DESC
-) AS IItem
-
-OUTER APPLY
-(
-    SELECT TOP (1) PII.*
-    FROM [POS].vwAllPurchaseInvoiceItem AS PII WITH (NOLOCK)
-    INNER JOIN [pos].PurchaseInvoice AS Puri WITH (NOLOCK)
-        ON Puri.PurchaseInvoiceID = PII.PurchaseInvoiceRef
-    WHERE
-        PII.ItemRef = i.ItemID
-        AND (Puri.State = 1 OR Puri.State = 3)
-        AND ISNULL(PII.Discount,0) < PII.Fee
-        AND Puri.RemainingPrice = 0
-        AND PII.IsReturn = 0
-    ORDER BY Puri.Date DESC
-) AS PurItem
-
-LEFT JOIN [pos].ItemSalePrice AS SaleItem WITH (NOLOCK)
-    ON SaleItem.ItemRef = i.ItemID
-
-LEFT JOIN VariantsItems AS VI WITH (NOLOCK)
-    ON VI.ItemID = i.Code
-
-WHERE
-    REPLACE(Title,N' ',N'') like REPLACE('%%%s',' ','')
-    AND itemS.FiscalPeriodRef = %d;
-    GO
-  SELECT  
-  TOP 1
-	ISNULL(VariantID,0),
-    Quantity,
-    Title,
-    Code,
-    ItemID,
-    Fee
-FROM  #ItemTemp where REPLACE(Title,N' ',N'') like REPLACE('%%%s',' ','')
-`, portal.Name,fiscalPeriod)
-	if Debug {
-		log.Print(query)
-	}
-	var item types.ItemDetail
-	err := sync_db.SQL_DB.QueryRow(query).Scan(&item.VariantID, &item.Quantity, &item.Title, &item.Code, &item.ItemID, &item.Fee)
+	 (select MAX(val) from (values(itemS.Quantity),(0)) as T(val) ),
+    FROM POS.[vwItemSalePrice] as Item
+    LEFT JOIN [POS].ItemStockSummary AS itemS WITH (NOLOCK)
+        ON itemS.ItemRef = Item.ItemRef and FiscalPeriodRef = ?
+    OUTER APPLY
+     (SELECT TOP 1 
+    MainUnitFee
+    FROM POS.SaleInvoiceItem SII
+        INNER JOIN POS.SaleInvoice SI ON SII.SaleInvoiceRef = SI.SaleInvoiceID  
+	    AND SI.IsReturn = 0
+	    AND SI.[State] = 1 -- Only registered vouchers
+	    AND SI.IsOnConsignment = 0
+     AND SI.PartyRef = -5
+    INNER JOIN POS.Item I ON SII.ItemRef = I.ItemID
+    LEFT JOIN POS.ItemSubUnit ISU ON SII.ItemSubUnitRef = ISU.ItemSubUnitID
+        WHERE  SII.ItemRef = Item.ItemRef AND SII.Fee IS NOT NULL
+     ORDER BY SI.Date DESC, SII.SaleInvoiceItemID DESC
+     ) AS SaleItem 
+     where REPLACE(Item.ItemTitle,' ','') = Replace(?,' ','') and IsMainUnit =1
+`, fiscalPeriod, portal.Name).Scan(&item.VariantID, &item.Quantity, &item.Title, &item.Code, &item.ItemID, &item.Fee)
 	if err != nil {
-		log.Printf("Error in Item Query item:%+v err:%s\n", *portal, err.Error())
 		return nil, err
 	}
 	if item.ItemID == 0 {
@@ -789,40 +670,40 @@ func GetItnmDetailByOrderIdSync() ([]types.ItemDetail, error) {
 	}
 	return items, err
 }
-func GetItemByCreationDate(date string, ch chan types.ItemDetail, update ...bool) {
+func GetItemByCreationDate(date string, ch chan types.ItemDetail, fiscalPeriod int, update ...bool) {
 	var item types.ItemDetail
 	if len(update) > 0 && update[0] {
 		defer setLastCreatedId(item)
 	}
 	defer close(ch)
-	query := fmt.Sprintf(`with cte as(SELECT VI.VariantID,itemS.Quantity, i.Title,i.Code,i.ItemID,
-		(select max(val) from (VALUES(max(IItem.Fee)),  (max(PurItem.Fee)) , (max(SaleItem.Price0))) as T(val) ) as Fee,
-		IItem.SaleInvoiceItemID,IItem.SaleInvoiceNumber,ROW_NUMBER() OVER (
-            PARTITION BY i.Code
-            ORDER BY IItem.SaleInvoiceDate DESC )as rn from [Pos].Item as i
-left JOIN [POS].ItemStockSummary as itemS on itemS.ItemRef = i.ItemID
-left join [POS].vwAllSaleInvoiceItem as IItem on IItem.ItemRef = i.ItemID
-left join [POS].vwAllPurchaseInvoiceItem as PurItem on PurItem.ItemRef = i.ItemID
-left join [pos].ItemSalePrice as SaleItem on SaleItem.ItemRef = i.ItemID
-left join VariantsItems as VI on VI.ItemID = CAST(i.ItemID as nvarchar(250))
-  WHERE i.CreationDate > CONVERT(DATETIME, '%s', 111) and
-  IItem.SaleInvoiceDate>= dateadd(day,DATEDIFF(day,3,(select  max(IItem.SaleInvoiceDate) from  [POS].vwAllSaleInvoiceItem as IItem where IItem.ItemRef = i.ItemID) ),0 )
-and itemS.FiscalPeriodRef =( SELECT TOP 1 FiscalPeriodID from [FMK].FiscalPeriod order by FiscalPeriodID desc )
-group by itemS.Quantity,i.Title,  i.Code,i.ItemID, IItem.SaleInvoiceDate,IItem.SaleInvoiceItemID,IItem.SaleInvoiceNumber,VI.VariantID)
-  SELECT  ISNULL(VariantID,0),
-    Quantity,
-    Title,
-    Code,
-    ItemID,
-    Fee
-	FROM cte
-	where rn = 1
-	ORDER BY  FEE,SaleInvoiceItemID,ItemID DESC`, date)
-
-	rows, err := sync_db.SQL_DB.Query(query)
-	if types.Debug {
-		log.Printf("[INFO]: %s", query)
-	}
+	rows, err := sync_db.SQL_DB.Query(` 
+        SELECT MAX(val)
+        FROM (VALUES
+                (SaleItem.MainUnitFee),
+                (Item.LastPurchasePrice),
+                (Item.DefaultPrice)
+             ) AS T(val)
+    ) AS Fee,
+	 (select MAX(val) from (values(itemS.Quantity),(0)) as T(val) ),
+    FROM POS.[vwItemSalePrice] as Item
+    LEFT JOIN [POS].ItemStockSummary AS itemS WITH (NOLOCK)
+        ON itemS.ItemRef = Item.ItemRef and FiscalPeriodRef = ?
+    OUTER APPLY
+     (SELECT TOP 1 
+    MainUnitFee
+    FROM POS.SaleInvoiceItem SII
+        INNER JOIN POS.SaleInvoice SI ON SII.SaleInvoiceRef = SI.SaleInvoiceID  
+	    AND SI.IsReturn = 0
+	    AND SI.[State] = 1 -- Only registered vouchers
+	    AND SI.IsOnConsignment = 0
+     AND SI.PartyRef = -5
+    INNER JOIN POS.Item I ON SII.ItemRef = I.ItemID
+    LEFT JOIN POS.ItemSubUnit ISU ON SII.ItemSubUnitRef = ISU.ItemSubUnitID
+        WHERE  SII.ItemRef = Item.ItemRef AND SII.Fee IS NOT NULL
+     ORDER BY SI.Date DESC, SII.SaleInvoiceItemID DESC
+     ) AS SaleItem 
+     where Item.CreationDate > CONVERT(DATETIME, ?, 111) and IsMainUnit =1
+`, fiscalPeriod, date)
 	if err != nil {
 		log.Fatalf("Error While getting items %s", err.Error())
 		return
@@ -837,14 +718,17 @@ group by itemS.Quantity,i.Title,  i.Code,i.ItemID, IItem.SaleInvoiceDate,IItem.S
 
 }
 func updateVariabtItemTable(variantId string, code string) {
+	if len(code) == 0 {
+		return
+	}
 	_, err := sync_db.SQL_DB.Exec(`Insert VariantsItems(VariantID,ItemID) SELECT ?,? WHERE NOT EXISTS (SELECT 1 from VariantsItems where VariantID = ? )`, variantId, code, variantId)
 	if err != nil {
 		log.Printf("Erorr while updateing VariantsItems(%s,%s) err: %s", variantId, code, err.Error())
 	}
 
 }
-func GetLatestFiascal()(int64,error){
-	var fiscal int64 
-	err:=sync_db.SQL_DB.QueryRow( "select TOP 1 FiscalPeriodID from [FMK].FiscalPeriod order by FiscalPeriodID desc").Scan(&fiscal)
-	return fiscal,err
+func GetLatestFiascal() (int64, error) {
+	var fiscal int64
+	err := sync_db.SQL_DB.QueryRow("select TOP 1 FiscalPeriodID from [FMK].FiscalPeriod order by FiscalPeriodID desc").Scan(&fiscal)
+	return fiscal, err
 }

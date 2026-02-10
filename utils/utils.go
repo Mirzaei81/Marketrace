@@ -8,6 +8,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sync"
+	"time"
 
 	Jalaali "github.com/yaa110/go-persian-calendar"
 )
@@ -67,4 +69,21 @@ func getCSV(uri string, token string, ch chan *os.File) {
 		log.Fatal(err)
 	}
 	ch <- f
+}
+
+type Throttler struct {
+	invocations int
+	Duration    time.Duration
+	m           sync.Mutex
+	Max         int
+}
+
+func (t *Throttler) Throttle() {
+	t.m.Lock()
+	defer t.m.Unlock()
+	t.invocations += 1
+	if t.invocations >= t.Max {
+		<-time.After(t.Duration) // This block until the time period expires
+		t.invocations = 0
+	}
 }

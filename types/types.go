@@ -244,10 +244,11 @@ type Item struct {
 
 var PORTAL_BASE_URL string = "https://modernhyperindustry.com/"
 
-func ToInt(b []uint8) int {
+func ToInt(b []byte) int {
 	if len(b) == 0 {
 		return 0
 	}
+	// Float Maybe SQL SERVER HAS . in it
 	num, err := strconv.ParseFloat(string(b), 10)
 	if err != nil {
 		log.Fatalf("Error while parsing the stock/price %s", err.Error())

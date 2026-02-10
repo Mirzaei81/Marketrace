@@ -71,7 +71,9 @@ func TestGetItemByCreationDate(t *testing.T) {
 	ch := make(chan types.ItemDetail)
 	testDate := "2023/01/01"
 
-	go GetItemByCreationDate(testDate, ch, true)
+	lastFiscal, _ := GetLatestFiascal()
+
+	go GetItemByCreationDate(testDate, ch, int(lastFiscal), true)
 
 	count := 0
 	for item := range ch {

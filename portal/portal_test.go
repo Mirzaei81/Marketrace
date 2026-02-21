@@ -36,6 +36,12 @@ func TestFetchOrders(t *testing.T) {
 	}
 	t.Logf("%#v", orders)
 }
+func TestFeaturedProduct(t *testing.T){
+	portal.GetSkipProds(token,*skipStats)
+	
+	portal.SyncVariants(token, *csv_path)
+
+}
 
 //	func TestVariantByPrice(t *testing.T) {
 //		update.SetPrice = true
@@ -80,6 +86,10 @@ func TestFetchOrders(t *testing.T) {
 //		}
 //		t.Logf("Portal csv export  variant  count %d", count)
 //	}
+<<<<<<< HEAD
+=======
+
+>>>>>>> 4f530b5 ( init commit)
 func readCsvbk(reader *csv.Reader, token string) int {
 	count := 0
 	_, err := reader.Read()

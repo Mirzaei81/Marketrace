@@ -21,6 +21,7 @@ var SetPrice bool
 var Throttle *utils.Throttler
 var SkipStatsName string
 var Layout string
+var Client *types.RLHTTPClient
 
 func Update_Variants(token string, variant_id string, stock int, sku string, price int, fieldName string, wg *sync.WaitGroup) {
 	if wg != nil {
@@ -62,7 +63,6 @@ func Update_Variants(token string, variant_id string, stock int, sku string, pri
 		log.Println(string(product_byte))
 	}
 	payload := bytes.NewReader(product_byte)
-	client := &http.Client{}
 	req, err := http.NewRequest(method, url, payload)
 	if err != nil {
 		log.Println(err)
@@ -70,7 +70,7 @@ func Update_Variants(token string, variant_id string, stock int, sku string, pri
 	}
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", token))
-	res, err := client.Do(req)
+	res, err := Client.Do(req)
 	if err != nil {
 		log.Println(err)
 		return
@@ -95,7 +95,6 @@ func getVariant(token string, variantid string) *types.Variant {
 	url := fmt.Sprintf("%ssite/api/v1/manage/store/products/variants/%s", types.PORTAL_BASE_URL, variantid)
 	method := "GET"
 
-	client := &http.Client{}
 	req, err := http.NewRequest(method, url, nil)
 
 	if err != nil {
@@ -104,7 +103,7 @@ func getVariant(token string, variantid string) *types.Variant {
 	}
 	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", token))
 
-	res, err := client.Do(req)
+	res, err := Client.Do(req)
 	if err != nil {
 		fmt.Println(err)
 		return nil
@@ -130,7 +129,6 @@ func updateProduct(token string, prod types.PortalProduct) {
 	url := fmt.Sprintf("https://modernhyperindustry.com//site/api/v1/manage/store/products/%d", prod.ID)
 	method := "PUT"
 
-	client := &http.Client{}
 	req, err := http.NewRequest(method, url, nil)
 
 	if err != nil {
@@ -138,7 +136,7 @@ func updateProduct(token string, prod types.PortalProduct) {
 	}
 	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", token))
 
-	res, err := client.Do(req)
+	res, err := Client.Do(req)
 	if err != nil {
 		log.Println(err)
 	}
@@ -159,7 +157,6 @@ func getProduct(token string, product_id int) (types.PortalProduct, error) {
 	url := fmt.Sprintf("https://modernhyperindustry.com/site/api/v1/manage/store/products/%d", product_id)
 	method := "GET"
 
-	client := &http.Client{}
 	req, err := http.NewRequest(method, url, nil)
 
 	if err != nil {
@@ -168,7 +165,7 @@ func getProduct(token string, product_id int) (types.PortalProduct, error) {
 	}
 	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", token))
 
-	res, err := client.Do(req)
+	res, err := Client.Do(req)
 	if err != nil {
 		log.Println(err)
 		return prod, err
@@ -233,7 +230,6 @@ func UpdatePortalVariantSKU(token string, detail *types.ItemDetail, wg *sync.Wai
 	}
 	payload := bytes.NewReader(payLoadB)
 
-	client := &http.Client{}
 	req, err := http.NewRequest(method, url, payload)
 
 	if err != nil {
@@ -244,7 +240,7 @@ func UpdatePortalVariantSKU(token string, detail *types.ItemDetail, wg *sync.Wai
 	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", token))
 
 	Throttle.Throttle()
-	res, err := client.Do(req)
+	res, err := Client.Do(req)
 	if err != nil {
 		fmt.Println(err)
 		return

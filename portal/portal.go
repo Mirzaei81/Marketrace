@@ -28,6 +28,8 @@ import (
 )
 
 var base_url string = "https://modernhyperindustry.com/"
+var Client *types.RLHTTPClient
+var SkipProdID []int
 
 type Update_Resault struct {
 	Success  bool `json:"success"`
@@ -285,6 +287,10 @@ type Product_resault struct {
 	Product Product `json:"product"`
 }
 
+type ProductListResault struct {
+	Success bool    `json:"success"`
+	Products []Product `json:"products"`
+}
 type ProductVariant struct {
 	Status       []string `json:"status"`
 	Price        int      `json:"price"`
@@ -609,7 +615,7 @@ func UpdateVariantsField(token string, csvFile *os.File, fieldName string) {
 	lines, _ := lineCounter(csvFile)
 	csvFile.Seek(0, io.SeekStart)
 	portalCH := make(chan *types.PortalCSV, lines)
-	go sync_db.GetItemFromCsv(csvFile, portalCH, true)
+	go sync_db.GetItemFromCsv(csvFile, portalCH,SkipProdID, true)
 	for portalItem := range portalCH {
 		go update.Update_Variants(token, portalItem.VariantID, -1, "", 0, fieldName, nil)
 	}
@@ -691,7 +697,7 @@ func GetAndUpdateItemFromCsv(token string, csvFile *os.File) {
 	portalCH := make(chan *types.PortalCSV, lines)
 	itemCH := make(chan *types.DashtOrPortal, lines)
 
-	go sync_db.GetItemFromCsv(csvFile, portalCH, true)
+	go sync_db.GetItemFromCsv(csvFile, portalCH,SkipProdID, true)
 
 	wg := new(sync.WaitGroup)
 	dashConsumer := new(sync.WaitGroup)
@@ -917,3 +923,39 @@ func getProduct(token string, id int) (*Product, error) {
 	}
 	return &product_result.Product, nil
 }
+func GetSkipProds(token,status string) {
+
+	url := fmt.Sprintf("%s/site/api/v1/manage/store/products?size=100&status=%s",base_url,status)
+	method := "GET"
+
+	req, err := http.NewRequest(method, url, nil)
+
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s",token))
+
+	res, err := Client.Do(req)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	var product_result ProductListResault
+	err = json.Unmarshal(body, &product_result)
+	if err!=nil{
+		log.Fatal(err)
+	}
+	for _,prod:= range(product_result.Products){
+		SkipProdID = append(SkipProdID,prod.ID)
+	}
+
+}
+

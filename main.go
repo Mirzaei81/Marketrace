@@ -1,6 +1,7 @@
 package main
 
 import (
+	"golang.org/x/time/rate"
 	"flag"
 	"giv/dasht"
 	"giv/portal"
@@ -76,9 +77,11 @@ func main() {
 		Max:      1,
 		Duration: time.Duration(math.Ceil(1000.0/(float64)(*throttle)) * float64(time.Millisecond)),
 	}
-	if *throttle <= 0 {
-		log.Fatal("Throthle can't be zero/negetive ")
-	}
+	rl := rate.NewLimiter(rate.Every(
+		time.Duration(math.Ceil(1000.0/(float64)(*throttle)) * float64(time.Millisecond)),
+	),1)
+	update.Client = types.NewClient(rl)
+	portal.Client = types.NewClient(rl)
 	if *shutdownHour != -1 {
 		go func() {
 			for range time.Tick(time.Hour*1 + 1*time.Minute) {
@@ -159,6 +162,7 @@ func main() {
 		}
 	case "stock":
 		{
+			portal.GetSkipProds(token,*skipStats)
 			portal.SyncVariants(token, *csv_path)
 			for range time.Tick(time.Minute * 35) {
 				log.Println("Sync internal Database From new Portal Entries")

@@ -1,6 +1,7 @@
 package sync_db
 
 import (
+	"slices"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -86,7 +87,7 @@ func bootStrapTablesDasht(csvPath string) {
 
 	}
 }
-func GetItemFromCsv(fileReader io.Reader, ch chan *types.PortalCSV, sleep bool) {
+func GetItemFromCsv(fileReader io.Reader, ch chan *types.PortalCSV,SkipProds []int, sleep bool) {
 	defer close(ch)
 	csvReader := csv.NewReader(fileReader)
 	csvReader.Read()
@@ -103,6 +104,10 @@ func GetItemFromCsv(fileReader io.Reader, ch chan *types.PortalCSV, sleep bool) 
 		}
 
 		var item types.PortalCSV
+		prod_id,err:=strconv.ParseInt(row[1],10,64)
+		if  slices.Contains(SkipProds,int(prod_id)){
+			continue
+		}
 		item.VariantID = row[0]
 		item.Name = row[2]
 		item.Sku = row[8]

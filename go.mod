@@ -1,6 +1,8 @@
 module giv
 
-go 1.23.0
+go 1.24.0
+
+toolchain go1.24.4
 
 require (
 	github.com/jmoiron/sqlx v1.4.0
@@ -22,4 +24,5 @@ require (
 	github.com/technoweenie/multipartstreamer v1.0.1 // indirect
 	golang.org/x/crypto v0.38.0 // indirect
 	golang.org/x/text v0.25.0 // indirect
+	golang.org/x/time v0.14.0 // indirect
 )
